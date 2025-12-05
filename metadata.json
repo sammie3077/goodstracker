@@ -1,0 +1,5 @@
+{
+  "name": "GoodsTracker",
+  "description": "A specialized inventory manager for anime/manga merchandise (goods). Track items by series, manage proxy purchases, and monitor payment/arrival statuses.",
+  "requestFramePermissions": []
+}

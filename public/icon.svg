@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="110" fill="#FBBF24"/>
+
+  <!-- Package Icon -->
+  <g transform="translate(128, 128)">
+    <!-- Box -->
+    <rect x="32" y="64" width="192" height="192" rx="16" fill="white" opacity="0.95"/>
+
+    <!-- Tape Horizontal -->
+    <rect x="16" y="144" width="224" height="32" fill="#F59E0B"/>
+
+    <!-- Tape Vertical -->
+    <rect x="112" y="48" width="32" height="224" fill="#F59E0B"/>
+
+    <!-- Star decoration -->
+    <circle cx="80" cy="112" r="12" fill="#EF4444"/>
+    <circle cx="176" cy="112" r="12" fill="#EF4444"/>
+    <circle cx="128" cy="208" r="12" fill="#EF4444"/>
+
+    <!-- Heart shape -->
+    <path d="M128 220 L140 208 Q148 200 148 188 Q148 176 140 168 Q132 160 128 160 Q124 160 116 168 Q108 176 108 188 Q108 200 116 208 Z" fill="#F87171" opacity="0.8"/>
+  </g>
+</svg>

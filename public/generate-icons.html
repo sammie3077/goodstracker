@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>生成 App 圖標</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f3f4f6;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 { color: #1f2937; margin-bottom: 10px; }
+        p { color: #6b7280; margin-bottom: 30px; }
+        canvas {
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: block;
+        }
+        button {
+            background: #fbbf24;
+            color: #1f2937;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #f59e0b;
+        }
+        .info {
+            background: #fef3c7;
+            border-left: 4px solid #fbbf24;
+            padding: 16px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📦 生成 PWA 圖標</h1>
+        <p>點擊下方按鈕生成並下載您的 App 圖標</p>
+
+        <div class="info">
+            <strong>提示：</strong> 下載後將圖標重命名並放到 <code>public/</code> 資料夾
+        </div>
+
+        <h3>192x192 圖標</h3>
+        <canvas id="canvas192" width="192" height="192"></canvas>
+        <button onclick="downloadIcon(192)">下載 icon-192.png</button>
+
+        <h3 style="margin-top: 40px;">512x512 圖標</h3>
+        <canvas id="canvas512" width="512" height="512"></canvas>
+        <button onclick="downloadIcon(512)">下載 icon-512.png</button>
+    </div>
+
+    <script>
+        function drawIcon(canvas, size) {
+            const ctx = canvas.getContext('2d');
+            const scale = size / 512;
+
+            // Background
+            ctx.fillStyle = '#FBBF24';
+            roundRect(ctx, 0, 0, size, size, 110 * scale);
+
+            // Box background
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+            const boxX = 128 * scale;
+            const boxY = 192 * scale;
+            const boxSize = 256 * scale;
+            roundRect(ctx, boxX, boxY, boxSize, boxSize, 16 * scale);
+
+            // Horizontal tape
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(112 * scale, 272 * scale, 288 * scale, 32 * scale);
+
+            // Vertical tape
+            ctx.fillRect(240 * scale, 176 * scale, 32 * scale, 224 * scale);
+
+            // Decorative dots
+            ctx.fillStyle = '#EF4444';
+            drawCircle(ctx, 208 * scale, 240 * scale, 12 * scale);
+            drawCircle(ctx, 304 * scale, 240 * scale, 12 * scale);
+            drawCircle(ctx, 256 * scale, 336 * scale, 12 * scale);
+
+            // Text
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${48 * scale}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('📦', size / 2, size / 2 + 16 * scale);
+        }
+
+        function roundRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawCircle(ctx, x, y, r) {
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function downloadIcon(size) {
+            const canvas = document.getElementById('canvas' + size);
+            const link = document.createElement('a');
+            link.download = `icon-${size}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // Draw icons on page load
+        window.onload = function() {
+            drawIcon(document.getElementById('canvas192'), 192);
+            drawIcon(document.getElementById('canvas512'), 512);
+        };
+    </script>
+</body>
+</html>
