@@ -2,12 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import { StorageService } from '../services/storageService';
 import { ProxyService } from '../types';
-import { Plus, Edit2, Trash2, ExternalLink, X } from 'lucide-react';
+import { Plus, Edit2, Trash2, ExternalLink, X, ShoppingBag, Sparkle, Loader2 } from 'lucide-react';
 
 export const ProxyManager: React.FC = () => {
   const [proxies, setProxies] = useState<ProxyService[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Form State
   const [name, setName] = useState('');
@@ -15,12 +16,23 @@ export const ProxyManager: React.FC = () => {
   const [website, setWebsite] = useState('');
   const [note, setNote] = useState('');
 
+  // Confirm Dialog State
+  const [confirmConfig, setConfirmConfig] = useState<{
+      isOpen: boolean;
+      title: string;
+      message: React.ReactNode;
+      onConfirm: () => void;
+  } | null>(null);
+
   useEffect(() => {
     loadData();
   }, []);
 
-  const loadData = () => {
-    setProxies(StorageService.getProxies());
+  const loadData = async () => {
+    setIsLoading(true);
+    const data = await StorageService.getProxies();
+    setProxies(data);
+    setIsLoading(false);
   };
 
   const handleOpenModal = (proxy?: ProxyService) => {
@@ -40,7 +52,7 @@ export const ProxyManager: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
@@ -53,9 +65,9 @@ export const ProxyManager: React.FC = () => {
     };
 
     if (editingId) {
-      StorageService.updateProxy(proxyData);
+      await StorageService.updateProxy(proxyData);
     } else {
-      StorageService.addProxy(proxyData);
+      await StorageService.addProxy(proxyData);
     }
 
     setIsModalOpen(false);
@@ -63,27 +75,34 @@ export const ProxyManager: React.FC = () => {
   };
 
   const handleDelete = (id: string, e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
+    e?.stopPropagation();
+    e?.preventDefault();
     
-    // Removed setTimeout to fix mobile/browser blocking issues
-    if (window.confirm('確定要刪除這個代購嗎？相關的周邊資料可能會遺失關聯。')) {
-        StorageService.deleteProxy(id);
-        if (editingId === id) {
-            setIsModalOpen(false);
+    setConfirmConfig({
+        isOpen: true,
+        title: '刪除代購',
+        message: '確定要刪除這個代購嗎？相關的周邊資料可能會遺失關聯。',
+        onConfirm: async () => {
+            await StorageService.deleteProxy(id);
+            if (editingId === id) {
+                setIsModalOpen(false);
+            }
+            loadData();
+            setConfirmConfig(null);
         }
-        loadData();
-    }
+    });
   };
+
+  if (isLoading && proxies.length === 0) {
+      return <div className="flex h-full items-center justify-center py-20"><Loader2 className="animate-spin text-secondary" /></div>;
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 pb-24 md:pb-6">
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-2xl font-black text-gray-800 flex items-center gap-2">
-            <span className="text-2xl">🛍️</span> 代購名單
+            <ShoppingBag size={28} className="text-secondary-dark" /> 代購名單
           </h1>
           <p className="text-gray-500 text-sm mt-1 font-medium">管理您常用的代購與賣家資訊</p>
         </div>
@@ -157,7 +176,10 @@ export const ProxyManager: React.FC = () => {
         <div className="fixed inset-0 bg-gray-900/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden border-4 border-white">
             <div className="px-8 py-5 border-b border-gray-100 bg-white flex justify-between items-center">
-              <h3 className="font-black text-xl text-gray-800">{editingId ? '✏️ 編輯代購' : '✨ 新增代購'}</h3>
+              <h3 className="font-black text-xl text-gray-800 flex items-center gap-2">
+                {editingId ? <Edit2 size={24} className="text-secondary-dark" /> : <Sparkle size={24} className="text-secondary-dark" />}
+                {editingId ? ' 編輯代購' : ' 新增代購'}
+              </h3>
               <button onClick={() => setIsModalOpen(false)} className="w-8 h-8 rounded-full bg-gray-50 text-gray-400 hover:bg-red-50 hover:text-red-500 flex items-center justify-center transition-colors cursor-pointer">
                 <X className="w-5 h-5 pointer-events-none" />
               </button>
@@ -231,6 +253,34 @@ export const ProxyManager: React.FC = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Confirm Dialog */}
+      {confirmConfig && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border-2 border-white animate-in zoom-in-95">
+              <div className="p-6">
+                 <h3 className="text-lg font-black text-gray-800 mb-3">{confirmConfig.title}</h3>
+                 <div className="text-sm font-medium text-gray-600 mb-6 leading-relaxed">
+                    {confirmConfig.message}
+                 </div>
+                 <div className="flex gap-3">
+                    <button 
+                      onClick={() => setConfirmConfig(null)}
+                      className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition cursor-pointer"
+                    >
+                       取消
+                    </button>
+                    <button 
+                      onClick={confirmConfig.onConfirm}
+                      className="flex-1 py-2.5 bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 shadow-md shadow-red-200 transition transform active:scale-95 cursor-pointer"
+                    >
+                       確認刪除
+                    </button>
+                 </div>
+              </div>
+           </div>
         </div>
       )}
     </div>

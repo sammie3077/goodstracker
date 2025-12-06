@@ -14,7 +14,6 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ onImageCropped, init
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isEditing, setIsEditing] = useState(!initialImage);
-  const [savedImage, setSavedImage] = useState<string | null>(initialImage || null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -25,15 +24,54 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ onImageCropped, init
       const file = e.target.files[0];
       const reader = new FileReader();
       reader.onload = () => {
-        const imageData = reader.result as string;
-        setSrc(imageData);
-        setSavedImage(imageData);
-        // Automatically save the uploaded image
-        onImageCropped(imageData);
-        // Allow optional cropping
-        setIsEditing(false);
-        setScale(1);
-        setPosition({ x: 0, y: 0 });
+        const rawResult = reader.result as string;
+        
+        // 1. Load image to generate auto-crop immediately
+        const img = new Image();
+        img.onload = () => {
+            const size = 400; // Standard size
+            const aspect = img.width / img.height;
+            let drawW, drawH, offX, offY;
+            let initialScale = 1;
+            
+            // Calculate "Cover" dimensions for the canvas generation
+            if (aspect > 1) { // Wide
+                drawH = size;
+                drawW = size * aspect;
+                offX = -(drawW - size) / 2;
+                offY = 0;
+                initialScale = aspect; // Scale for UI to cover square
+            } else { // Tall
+                drawW = size;
+                drawH = size / aspect;
+                offX = 0;
+                offY = -(drawH - size) / 2;
+                initialScale = 1 / aspect; // Scale for UI to cover square
+            }
+            
+            // Generate Auto-Saved Image
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, size, size);
+                ctx.drawImage(img, offX, offY, drawW, drawH);
+                
+                const autoCropped = canvas.toDataURL('image/jpeg', 0.8);
+                
+                // Save immediately!
+                onImageCropped(autoCropped);
+            }
+
+            // Update UI State
+            setSrc(rawResult);
+            setScale(initialScale); // Set UI scale to match the cover look
+            setPosition({ x: 0, y: 0 });
+            setIsEditing(true);
+        };
+        img.src = rawResult;
       };
       reader.readAsDataURL(file);
     }
@@ -50,7 +88,18 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ onImageCropped, init
     if (!isDragging) return;
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-    setPosition({ x: clientX - dragStart.x, y: clientY - dragStart.y });
+    
+    // Calculate new position
+    let newX = clientX - dragStart.x;
+    let newY = clientY - dragStart.y;
+
+    // Clamping logic (prevent dragging image out of view)
+    // We assume the container is 100% width. The image is scaled relative to the container.
+    // This part is tricky without exact container dimensions in px, but we can approximate limits or just allow free drag.
+    // For better UX, let's allow free drag but maybe add bounds later.
+    // For now, free drag is safer than buggy bounds.
+    
+    setPosition({ x: newX, y: newY });
   };
 
   const handleMouseUp = () => {
@@ -61,52 +110,48 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ onImageCropped, init
     if (!imageRef.current || !containerRef.current) return;
 
     const canvas = document.createElement('canvas');
-    const size = 400; // Output size (reduced for localStorage)
+    const size = 400; // Output size
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
-
+    
     if (ctx) {
         // Calculate the relative position and scale
-        // The container is 256px (w-64). The output is 400px.
-        // Ratio = 400 / 256 = 1.5625
         const ratio = size / containerRef.current.clientWidth;
-
+        
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, size, size);
-
+        
         ctx.save();
         ctx.translate(size / 2, size / 2);
         ctx.translate(position.x * ratio, position.y * ratio);
         ctx.scale(scale, scale);
-
+        
         const img = imageRef.current;
         // Draw image centered
         ctx.drawImage(img, -img.width * ratio / 2, -img.height * ratio / 2, img.width * ratio, img.height * ratio);
-
+        
         ctx.restore();
-
+        
         const base64 = canvas.toDataURL('image/jpeg', 0.8);
         onImageCropped(base64);
-        setIsEditing(false);
-        setSrc(base64);
-        setSavedImage(base64);
+        setIsEditing(false); // Exit edit mode to show preview
+        setSrc(base64); // Update the preview source to the cropped version
     }
+  };
+
+  const handleCancel = () => {
+      // Revert to initial image
+      setSrc(initialImage || null);
+      onImageCropped(initialImage || ''); // Restore parent state
+      setIsEditing(false);
   };
 
   const handleRemove = () => {
       setSrc(null);
-      setSavedImage(null);
       onImageCropped('');
       setIsEditing(true);
   };
-
-  // Sync savedImage when initialImage changes
-  useEffect(() => {
-      if (initialImage) {
-          setSavedImage(initialImage);
-      }
-  }, [initialImage]);
 
   if (!src) {
       return (
@@ -124,21 +169,19 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ onImageCropped, init
       return (
           <div className="relative w-full aspect-square bg-gray-100 rounded-xl overflow-hidden border-2 border-gray-100 group">
               <img src={src} alt="Preview" className="w-full h-full object-cover" />
-              <button
-                type="button"
+              <button 
                 onClick={() => setIsEditing(true)}
-                className="absolute top-2 right-2 bg-white/90 p-2 rounded-full text-gray-700 shadow-md opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:text-primary cursor-pointer"
-                title="裁切圖片（可選）"
+                className="absolute top-2 right-2 bg-white/90 p-2 rounded-full text-gray-700 shadow-md opacity-0 group-hover:opacity-100 transition-all hover:text-primary"
+                title="重新裁切"
               >
-                  <ZoomIn size={16} className="pointer-events-none" />
+                  <ZoomIn size={16} />
               </button>
-              <button
-                type="button"
+              <button 
                 onClick={handleRemove}
-                className="absolute top-2 left-2 bg-white/90 p-2 rounded-full text-red-500 shadow-md opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-red-50 cursor-pointer"
+                className="absolute top-2 left-2 bg-white/90 p-2 rounded-full text-red-500 shadow-md opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50"
                 title="移除照片"
               >
-                  <X size={16} className="pointer-events-none" />
+                  <X size={16} />
               </button>
           </div>
       );
@@ -196,24 +239,19 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ onImageCropped, init
         </div>
 
         <div className="flex gap-2 w-full mt-1">
-            <button
+            <button 
                 type="button"
-                onClick={() => {
-                    setSrc(savedImage);
-                    setIsEditing(false);
-                    setScale(1);
-                    setPosition({ x: 0, y: 0 });
-                }}
-                className="flex-1 py-2 text-gray-500 font-bold hover:bg-gray-100 rounded-lg cursor-pointer"
+                onClick={handleCancel}
+                className="flex-1 py-2 text-gray-500 font-bold hover:bg-gray-100 rounded-lg"
             >
                 取消
             </button>
-            <button
+            <button 
                 type="button"
                 onClick={handleCrop}
-                className="flex-1 py-2 bg-primary text-gray-900 font-bold rounded-lg hover:bg-primary-dark shadow-md cursor-pointer"
+                className="flex-1 py-2 bg-primary text-gray-900 font-bold rounded-lg hover:bg-primary-dark shadow-md"
             >
-                確認裁切
+                更新裁切
             </button>
         </div>
     </div>

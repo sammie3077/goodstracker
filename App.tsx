@@ -2,12 +2,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoodsList } from './components/GoodsList';
 import { ProxyManager } from './components/ProxyManager';
+import { GalleryList } from './components/GalleryList';
 import { StorageService } from './services/storageService';
-import { LayoutGrid, Users, Palette, Check, X, Settings, Download, Upload, AlertTriangle } from 'lucide-react';
+import { LayoutGrid, Users, Palette, Check, X, Settings, Download, Upload, AlertTriangle, BookOpen, Loader2 } from 'lucide-react';
 
 // --- Theme Definitions ---
 
-type ThemeId = 'yellow' | 'pink' | 'blue';
+type ThemeId = 'yellow' | 'pink' | 'blue' | 'green' | 'purple' | 'rose';
 
 interface ThemeColors {
   primary: string;
@@ -52,6 +53,39 @@ const THEMES: Record<ThemeId, { name: string; colors: ThemeColors }> = {
       background: '#fcfdfd',   // Cool White
     },
   },
+  green: {
+    name: '薄荷抹茶',
+    colors: {
+      primary: '#c1d7ad',      // Soft Yellow Green
+      primaryLight: '#f4f8f2', // Very light green
+      primaryDark: '#90c4b7',  // Teal Green
+      secondary: '#c2d9d2',    // Sage Grey
+      secondaryDark: '#8ba39c',
+      background: '#fdfffe',   // Mint White
+    },
+  },
+  purple: {
+    name: '紫藤花季',
+    colors: {
+      primary: '#cab2d1',      // Orchid
+      primaryLight: '#f8f4f9', // Very light lilac
+      primaryDark: '#afa8cd',  // Medium Purple
+      secondary: '#e2d9e6',    // Light Lilac
+      secondaryDark: '#988db0',
+      background: '#fdfcff',   // Lavender White
+    },
+  },
+  rose: {
+    name: '古典玫瑰',
+    colors: {
+      primary: '#e7c6c5',      // Coral Pink
+      primaryLight: '#fcf6f6', // Very light rose
+      primaryDark: '#d9a5a4',  // Deep Coral
+      secondary: '#ead7dd',    // Dusty Rose
+      secondaryDark: '#bda8af',
+      background: '#fffefe',   // Lighter Warm White (Almost pure white with tiny pink tint)
+    },
+  },
 };
 
 // Helper to convert Hex to RGB numbers (e.g. "#FF0000" -> "255 0 0") for CSS Variables
@@ -87,21 +121,31 @@ const TreasureChestIcon = ({ className }: { className?: string }) => (
 
 // --- App Component ---
 
-type View = 'goods' | 'proxies';
+type View = 'goods' | 'gallery' | 'proxies';
 
 const App: React.FC = () => {
+  const [isInitializing, setIsInitializing] = useState(true);
   const [currentView, setCurrentView] = useState<View>('goods');
   const [currentTheme, setCurrentTheme] = useState<ThemeId>('yellow');
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load theme from storage
+  // Initialize DB and load theme
   useEffect(() => {
-    const savedTheme = localStorage.getItem('app_theme') as ThemeId;
-    if (savedTheme && THEMES[savedTheme]) {
-      setCurrentTheme(savedTheme);
-    }
+    const initApp = async () => {
+        // Init DB (and perform migration if needed)
+        await StorageService.init();
+        
+        // Load Theme
+        const savedTheme = localStorage.getItem('app_theme') as ThemeId;
+        if (savedTheme && THEMES[savedTheme]) {
+            setCurrentTheme(savedTheme);
+        }
+        
+        setIsInitializing(false);
+    };
+    initApp();
   }, []);
 
   // Apply theme to CSS variables
@@ -120,20 +164,25 @@ const App: React.FC = () => {
   }, [currentTheme]);
 
   // Export Data Handler
-  const handleExport = () => {
-    const data = StorageService.getAllData();
-    const fileName = `goods-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const href = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.href = href;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(href);
+  const handleExport = async () => {
+    try {
+        const data = await StorageService.getAllData();
+        const fileName = `goods-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const href = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(href);
+    } catch (e) {
+        console.error(e);
+        alert('匯出失敗，請重試');
+    }
   };
 
   // Import Data Handler
@@ -142,35 +191,38 @@ const App: React.FC = () => {
     if (!file) return;
 
     if (!window.confirm('⚠️ 警告：匯入將會覆寫目前的所有資料。\n\n您確定要繼續嗎？')) {
-        // Reset input so it triggers next time even if same file
-        event.target.value = '';
+        // Reset input so validation triggers next time even if same file
+        event.target.value = ''; 
         return;
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const json = JSON.parse(e.target?.result as string);
-        const success = StorageService.restoreData(json);
+        const success = await StorageService.restoreData(json);
         if (success) {
           alert('✅ 資料還原成功！網頁將自動重新整理。');
           window.location.reload();
         } else {
           alert('❌ 資料格式錯誤，無法還原。');
-          event.target.value = ''; // Reset for retry
         }
       } catch (error) {
         console.error(error);
         alert('❌ 讀取檔案失敗。');
-        event.target.value = ''; // Reset for retry
       }
-    };
-    reader.onerror = () => {
-      alert('❌ 檔案讀取錯誤。');
-      event.target.value = ''; // Reset for retry
     };
     reader.readAsText(file);
   };
+
+  if (isInitializing) {
+      return (
+          <div className="min-h-screen bg-background flex flex-col items-center justify-center text-gray-600 gap-4">
+              <Loader2 size={48} className="animate-spin text-primary" />
+              <p className="font-bold">正在載入資料庫...</p>
+          </div>
+      );
+  }
 
   return (
     <div className="min-h-screen bg-background text-gray-800 font-sans flex flex-col pb-20 md:pb-0 transition-colors duration-500">
@@ -201,6 +253,17 @@ const App: React.FC = () => {
                   >
                     <LayoutGrid className="w-4 h-4 mr-2" strokeWidth={2.5} />
                     我的周邊
+                  </button>
+                  <button
+                    onClick={() => setCurrentView('gallery')}
+                    className={`flex items-center px-6 py-2.5 rounded-full text-sm font-bold transition-all ${
+                      currentView === 'gallery' 
+                        ? 'bg-primary text-gray-800 shadow-md shadow-primary/20' 
+                        : 'text-gray-400 hover:bg-primary-light hover:text-gray-600'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" strokeWidth={2.5} />
+                    圖鑑
                   </button>
                   <button
                     onClick={() => setCurrentView('proxies')}
@@ -239,7 +302,7 @@ const App: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex-1 w-full max-w-7xl mx-auto">
-        {currentView === 'goods' ? <GoodsList /> : <ProxyManager />}
+        {currentView === 'goods' ? <GoodsList /> : currentView === 'gallery' ? <GalleryList /> : <ProxyManager />}
       </div>
 
       {/* Mobile Bottom Navigation */}
@@ -254,9 +317,23 @@ const App: React.FC = () => {
             }`}
           >
             <div className={`p-1 rounded-full ${currentView === 'goods' ? 'bg-primary text-gray-800' : ''}`}>
-              <LayoutGrid className="w-6 h-6" strokeWidth={currentView === 'goods' ? 3 : 2} />
+              <LayoutGrid className="w-5 h-5" strokeWidth={currentView === 'goods' ? 3 : 2} />
             </div>
             <span className="text-[10px] font-bold">周邊</span>
+          </button>
+
+          <button
+            onClick={() => setCurrentView('gallery')}
+            className={`flex flex-col items-center gap-1 p-2 rounded-xl w-full transition-all ${
+              currentView === 'gallery' 
+                ? 'text-gray-800 bg-primary-light' 
+                : 'text-gray-400'
+            }`}
+          >
+            <div className={`p-1 rounded-full ${currentView === 'gallery' ? 'bg-primary text-gray-800' : ''}`}>
+              <BookOpen className="w-5 h-5" strokeWidth={currentView === 'gallery' ? 3 : 2} />
+            </div>
+            <span className="text-[10px] font-bold">圖鑑</span>
           </button>
           
           <button
@@ -268,7 +345,7 @@ const App: React.FC = () => {
             }`}
           >
             <div className={`p-1 rounded-full ${currentView === 'proxies' ? 'bg-secondary text-white' : ''}`}>
-              <Users className="w-6 h-6" strokeWidth={currentView === 'proxies' ? 3 : 2} />
+              <Users className="w-5 h-5" strokeWidth={currentView === 'proxies' ? 3 : 2} />
             </div>
             <span className="text-[10px] font-bold">代購</span>
           </button>
@@ -285,12 +362,12 @@ const App: React.FC = () => {
           ></div>
 
           {/* Modal Content */}
-          <div className="bg-white w-full md:w-96 rounded-t-[2rem] md:rounded-[2rem] p-6 pb-safe md:pb-6 shadow-2xl transform transition-transform pointer-events-auto border-4 border-white animate-in slide-in-from-bottom-10 md:animate-in md:zoom-in-95">
-             <div className="flex justify-between items-center mb-6">
+          <div className="bg-white w-full md:w-96 rounded-t-[2rem] md:rounded-[2rem] p-6 pb-safe md:pb-6 shadow-2xl transform transition-transform pointer-events-auto border-4 border-white animate-in slide-in-from-bottom-10 md:animate-in md:zoom-in-95 max-h-[85vh] overflow-y-auto custom-scrollbar">
+             <div className="flex justify-between items-center mb-6 sticky top-0 bg-white z-10 py-2">
                 <h3 className="text-lg font-black text-gray-800 flex items-center gap-2">
                    <Palette size={20} className="text-primary-dark"/> 選擇主題配色
                 </h3>
-                <button type="button" onClick={() => setIsThemeMenuOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-400 transition cursor-pointer">
+                <button onClick={() => setIsThemeMenuOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-400 transition">
                    <X size={20} />
                 </button>
              </div>
@@ -299,9 +376,8 @@ const App: React.FC = () => {
                 {(Object.entries(THEMES) as [ThemeId, typeof THEMES[ThemeId]][]).map(([id, theme]) => (
                    <button
                       key={id}
-                      type="button"
                       onClick={() => { setCurrentTheme(id); setIsThemeMenuOpen(false); }}
-                      className={`flex items-center p-3 rounded-2xl border-2 transition-all hover:scale-[1.02] active:scale-95 cursor-pointer ${
+                      className={`flex items-center p-3 rounded-2xl border-2 transition-all hover:scale-[1.02] active:scale-95 ${
                          currentTheme === id ? 'border-gray-800 bg-gray-50' : 'border-transparent hover:bg-gray-50'
                       }`}
                    >
@@ -343,7 +419,7 @@ const App: React.FC = () => {
                       <Settings size={22} className="text-gray-500" />
                       系統設定
                   </h3>
-                  <button type="button" onClick={() => setIsSettingsOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 transition cursor-pointer">
+                  <button onClick={() => setIsSettingsOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 transition">
                       <X size={20} />
                   </button>
               </div>
@@ -357,10 +433,9 @@ const App: React.FC = () => {
                       <p className="text-xs text-gray-500">
                           下載所有資料的備份檔案 (.json)。您可以將此檔案傳送到新裝置。
                       </p>
-                      <button
-                        type="button"
+                      <button 
                         onClick={handleExport}
-                        className="w-full py-3 bg-primary-light text-primary-dark font-bold rounded-xl border-2 border-primary hover:bg-primary hover:text-gray-900 transition-colors shadow-sm cursor-pointer"
+                        className="w-full py-3 bg-primary-light text-primary-dark font-bold rounded-xl border-2 border-primary hover:bg-primary hover:text-gray-900 transition-colors shadow-sm"
                       >
                           下載備份檔案
                       </button>
@@ -384,17 +459,16 @@ const App: React.FC = () => {
                           </p>
                       </div>
 
-                      <input
-                        type="file"
-                        accept=".json"
-                        ref={fileInputRef}
-                        onChange={handleImport}
-                        className="hidden"
+                      <input 
+                        type="file" 
+                        accept=".json" 
+                        ref={fileInputRef} 
+                        onChange={handleImport} 
+                        className="hidden" 
                       />
-                      <button
-                        type="button"
+                      <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className="w-full py-3 bg-gray-100 text-gray-600 font-bold rounded-xl border-2 border-gray-200 hover:bg-secondary hover:border-secondary hover:text-white transition-colors shadow-sm cursor-pointer"
+                        className="w-full py-3 bg-gray-100 text-gray-600 font-bold rounded-xl border-2 border-gray-200 hover:bg-secondary hover:border-secondary hover:text-white transition-colors shadow-sm"
                       >
                           選取檔案並還原
                       </button>

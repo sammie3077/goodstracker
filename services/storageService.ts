@@ -1,35 +1,85 @@
 
-import { GoodsItem, ProxyService, Work, Category } from '../types';
+import { GoodsItem, ProxyService, Work, GalleryItem } from '../types';
+import { DB, STORES } from './db';
 
-const STORAGE_KEYS = {
+const LEGACY_STORAGE_KEYS = {
   ITEMS: 'goods_tracker_items',
+  GALLERY: 'goods_tracker_gallery',
   WORKS: 'goods_tracker_works',
   PROXIES: 'goods_tracker_proxies',
-  THEME: 'app_theme', // Include theme in backup
 };
+
+const THEME_KEY = 'app_theme';
 
 // Initial Data Seeding
 const DEFAULT_CATEGORIES = ['徽章', '立牌', '紙片'];
 
 export const StorageService = {
+  // --- Initialization & Migration ---
+  init: async (): Promise<boolean> => {
+    try {
+      await DB.init();
+      
+      // Check if DB is empty, if so, try to migrate from localStorage
+      const works = await DB.getAll<Work>(STORES.WORKS);
+      if (works.length === 0) {
+        // Attempt Migration
+        const legacyItemsStr = localStorage.getItem(LEGACY_STORAGE_KEYS.ITEMS);
+        const legacyGalleryStr = localStorage.getItem(LEGACY_STORAGE_KEYS.GALLERY);
+        const legacyWorksStr = localStorage.getItem(LEGACY_STORAGE_KEYS.WORKS);
+        const legacyProxiesStr = localStorage.getItem(LEGACY_STORAGE_KEYS.PROXIES);
+
+        if (legacyWorksStr || legacyItemsStr) {
+          console.log('Migrating data from localStorage to IndexedDB...');
+          if (legacyWorksStr) await DB.bulkPut(STORES.WORKS, JSON.parse(legacyWorksStr));
+          if (legacyItemsStr) await DB.bulkPut(STORES.ITEMS, JSON.parse(legacyItemsStr));
+          if (legacyGalleryStr) await DB.bulkPut(STORES.GALLERY, JSON.parse(legacyGalleryStr));
+          if (legacyProxiesStr) await DB.bulkPut(STORES.PROXIES, JSON.parse(legacyProxiesStr));
+          
+          // Clear legacy data to free up space, but keep theme
+          // Note: Comment this out if you want to keep a backup in localStorage for a while
+          localStorage.removeItem(LEGACY_STORAGE_KEYS.ITEMS);
+          localStorage.removeItem(LEGACY_STORAGE_KEYS.GALLERY);
+          localStorage.removeItem(LEGACY_STORAGE_KEYS.WORKS);
+          localStorage.removeItem(LEGACY_STORAGE_KEYS.PROXIES);
+          
+          return true; // Migrated
+        }
+      }
+      return false; // No migration needed
+    } catch (e) {
+      console.error("DB Init failed", e);
+      return false;
+    }
+  },
+
   // --- Backup & Restore ---
-  getAllData: () => {
+  getAllData: async () => {
     return {
-      items: StorageService.getItems(),
-      works: StorageService.getWorks(),
-      proxies: StorageService.getProxies(),
-      theme: localStorage.getItem(STORAGE_KEYS.THEME) || 'yellow',
+      items: await DB.getAll<GoodsItem>(STORES.ITEMS),
+      gallery: await DB.getAll<GalleryItem>(STORES.GALLERY),
+      works: await DB.getAll<Work>(STORES.WORKS),
+      proxies: await DB.getAll<ProxyService>(STORES.PROXIES),
+      theme: localStorage.getItem(THEME_KEY) || 'yellow',
       backupDate: new Date().toISOString(),
     };
   },
 
-  restoreData: (data: any) => {
+  restoreData: async (data: any): Promise<boolean> => {
     if (!data) return false;
     try {
-      if (Array.isArray(data.items)) StorageService.saveItems(data.items);
-      if (Array.isArray(data.works)) StorageService.saveWorks(data.works);
-      if (Array.isArray(data.proxies)) StorageService.saveProxies(data.proxies);
-      if (typeof data.theme === 'string') localStorage.setItem(STORAGE_KEYS.THEME, data.theme);
+      await DB.clear(STORES.ITEMS);
+      await DB.clear(STORES.GALLERY);
+      await DB.clear(STORES.WORKS);
+      await DB.clear(STORES.PROXIES);
+
+      if (Array.isArray(data.items)) await DB.bulkPut(STORES.ITEMS, data.items);
+      if (Array.isArray(data.gallery)) await DB.bulkPut(STORES.GALLERY, data.gallery);
+      if (Array.isArray(data.works)) await DB.bulkPut(STORES.WORKS, data.works);
+      if (Array.isArray(data.proxies)) await DB.bulkPut(STORES.PROXIES, data.proxies);
+      
+      if (typeof data.theme === 'string') localStorage.setItem(THEME_KEY, data.theme);
+      
       return true;
     } catch (e) {
       console.error("Restore failed", e);
@@ -37,143 +87,120 @@ export const StorageService = {
     }
   },
 
-  // --- Items ---
-  getItems: (): GoodsItem[] => {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.ITEMS);
-      return data ? JSON.parse(data) : [];
-    } catch (e) {
-      console.error("Failed to load items", e);
-      return [];
-    }
+  // --- Items (Goods) ---
+  getItems: async (): Promise<GoodsItem[]> => {
+    return DB.getAll<GoodsItem>(STORES.ITEMS);
   },
-  saveItems: (items: GoodsItem[]) => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items));
-    } catch (e) {
-      console.error("Failed to save items (likely quota exceeded)", e);
-      throw e;
-    }
+  addItem: async (item: GoodsItem) => {
+    await DB.add(STORES.ITEMS, item);
   },
-  addItem: (item: GoodsItem) => {
-    const items = StorageService.getItems();
-    items.push(item);
-    StorageService.saveItems(items);
+  updateItem: async (item: GoodsItem) => {
+    await DB.put(STORES.ITEMS, item);
   },
-  updateItem: (updatedItem: GoodsItem) => {
-    const items = StorageService.getItems();
-    const index = items.findIndex(i => i.id === updatedItem.id);
-    if (index !== -1) {
-      items[index] = updatedItem;
-      StorageService.saveItems(items);
-    }
+  deleteItem: async (id: string) => {
+    await DB.delete(STORES.ITEMS, id);
   },
-  deleteItem: (id: string) => {
-    const items = StorageService.getItems();
-    const newItems = items.filter(i => i.id !== id);
-    StorageService.saveItems(newItems);
+
+  // --- Gallery Items ---
+  getGalleryItems: async (): Promise<GalleryItem[]> => {
+    return DB.getAll<GalleryItem>(STORES.GALLERY);
+  },
+  addGalleryItem: async (item: GalleryItem) => {
+    await DB.add(STORES.GALLERY, item);
+  },
+  updateGalleryItem: async (item: GalleryItem) => {
+    await DB.put(STORES.GALLERY, item);
+  },
+  deleteGalleryItem: async (id: string) => {
+    await DB.delete(STORES.GALLERY, id);
   },
 
   // --- Works & Categories ---
-  getWorks: (): Work[] => {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.WORKS);
-      return data ? JSON.parse(data) : [];
-    } catch (e) {
-      return [];
-    }
+  getWorks: async (): Promise<Work[]> => {
+    return DB.getAll<Work>(STORES.WORKS);
   },
-  saveWorks: (works: Work[]) => {
-    localStorage.setItem(STORAGE_KEYS.WORKS, JSON.stringify(works));
-  },
-  addWork: (name: string): Work => {
-    const works = StorageService.getWorks();
+  addWork: async (name: string): Promise<Work> => {
     const newWork: Work = {
       id: crypto.randomUUID(),
       name,
       categories: DEFAULT_CATEGORIES.map(c => ({ id: crypto.randomUUID(), name: c })),
     };
-    works.push(newWork);
-    StorageService.saveWorks(works);
+    await DB.add(STORES.WORKS, newWork);
     return newWork;
   },
-  updateWork: (workId: string, name: string) => {
-    const works = StorageService.getWorks();
+  updateWork: async (workId: string, name: string) => {
+    const works = await StorageService.getWorks();
     const work = works.find(w => w.id === workId);
     if (work) {
       work.name = name;
-      StorageService.saveWorks(works);
+      await DB.put(STORES.WORKS, work);
     }
   },
-  deleteWork: (workId: string) => {
+  deleteWork: async (workId: string) => {
     // 1. Delete the work
-    const works = StorageService.getWorks();
-    const newWorks = works.filter(w => w.id !== workId);
-    StorageService.saveWorks(newWorks);
+    await DB.delete(STORES.WORKS, workId);
 
-    // 2. Cascade delete items belonging to this work
-    const items = StorageService.getItems();
-    const newItems = items.filter(i => i.workId !== workId);
-    StorageService.saveItems(newItems);
+    // 2. Cascade delete items (Goods)
+    const items = await StorageService.getItems();
+    const itemsToDelete = items.filter(i => i.workId === workId);
+    for (const item of itemsToDelete) {
+      await DB.delete(STORES.ITEMS, item.id);
+    }
+
+    // 3. Cascade delete items (Gallery)
+    const galleryItems = await StorageService.getGalleryItems();
+    const galleryToDelete = galleryItems.filter(i => i.workId === workId);
+    for (const item of galleryToDelete) {
+      await DB.delete(STORES.GALLERY, item.id);
+    }
   },
-  addCategoryToWork: (workId: string, categoryName: string) => {
-    const works = StorageService.getWorks();
+  addCategoryToWork: async (workId: string, categoryName: string) => {
+    const works = await StorageService.getWorks();
     const work = works.find(w => w.id === workId);
     if (work) {
       work.categories.push({ id: crypto.randomUUID(), name: categoryName });
-      StorageService.saveWorks(works);
+      await DB.put(STORES.WORKS, work);
     }
   },
-  updateCategory: (workId: string, categoryId: string, name: string) => {
-    const works = StorageService.getWorks();
+  updateCategory: async (workId: string, categoryId: string, name: string) => {
+    const works = await StorageService.getWorks();
     const work = works.find(w => w.id === workId);
     if (work) {
       const cat = work.categories.find(c => c.id === categoryId);
       if (cat) {
         cat.name = name;
-        StorageService.saveWorks(works);
+        await DB.put(STORES.WORKS, work);
       }
     }
   },
-  deleteCategory: (workId: string, categoryId: string) => {
+  deleteCategory: async (workId: string, categoryId: string) => {
     // 1. Remove category from work
-    const works = StorageService.getWorks();
+    const works = await StorageService.getWorks();
     const work = works.find(w => w.id === workId);
     if (work) {
       work.categories = work.categories.filter(c => c.id !== categoryId);
-      StorageService.saveWorks(works);
+      await DB.put(STORES.WORKS, work);
     }
 
     // 2. Cascade delete items belonging to this category
-    const items = StorageService.getItems();
-    const newItems = items.filter(i => i.categoryId !== categoryId);
-    StorageService.saveItems(newItems);
+    const items = await StorageService.getItems();
+    const itemsToDelete = items.filter(i => i.categoryId === categoryId);
+    for (const item of itemsToDelete) {
+      await DB.delete(STORES.ITEMS, item.id);
+    }
   },
 
   // --- Proxies ---
-  getProxies: (): ProxyService[] => {
-    const data = localStorage.getItem(STORAGE_KEYS.PROXIES);
-    return data ? JSON.parse(data) : [];
+  getProxies: async (): Promise<ProxyService[]> => {
+    return DB.getAll<ProxyService>(STORES.PROXIES);
   },
-  saveProxies: (proxies: ProxyService[]) => {
-    localStorage.setItem(STORAGE_KEYS.PROXIES, JSON.stringify(proxies));
+  addProxy: async (proxy: ProxyService) => {
+    await DB.add(STORES.PROXIES, proxy);
   },
-  addProxy: (proxy: ProxyService) => {
-    const proxies = StorageService.getProxies();
-    proxies.push(proxy);
-    StorageService.saveProxies(proxies);
+  updateProxy: async (proxy: ProxyService) => {
+    await DB.put(STORES.PROXIES, proxy);
   },
-  updateProxy: (updatedProxy: ProxyService) => {
-    const proxies = StorageService.getProxies();
-    const index = proxies.findIndex(p => p.id === updatedProxy.id);
-    if (index !== -1) {
-      proxies[index] = updatedProxy;
-      StorageService.saveProxies(proxies);
-    }
-  },
-  deleteProxy: (id: string) => {
-    const proxies = StorageService.getProxies();
-    const newProxies = proxies.filter(p => p.id !== id);
-    StorageService.saveProxies(newProxies);
+  deleteProxy: async (id: string) => {
+    await DB.delete(STORES.PROXIES, id);
   },
 };

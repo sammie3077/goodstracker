@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
 import { GoodsItem, Work, Category, ItemStatus, PaymentStatus, SourceType, SortOption, ProxyService, ConditionStatus } from '../types';
-import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkles } from 'lucide-react';
+import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkle, Library, Loader2 } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
 
 export const GoodsList: React.FC = () => {
@@ -10,12 +10,22 @@ export const GoodsList: React.FC = () => {
   const [items, setItems] = useState<GoodsItem[]>([]);
   const [works, setWorks] = useState<Work[]>([]);
   const [proxies, setProxies] = useState<ProxyService[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GoodsItem | null>(null);
+  
+  // Confirm Dialog State
+  const [confirmConfig, setConfirmConfig] = useState<{
+      isOpen: boolean;
+      title: string;
+      message: React.ReactNode;
+      onConfirm: () => void;
+      isDangerous?: boolean;
+  } | null>(null);
   
   // Filters & Sort
   const [sortBy, setSortBy] = useState<SortOption>('created_desc');
@@ -44,10 +54,17 @@ export const GoodsList: React.FC = () => {
     refreshData();
   }, []);
 
-  const refreshData = () => {
-    setItems(StorageService.getItems());
-    setWorks(StorageService.getWorks());
-    setProxies(StorageService.getProxies());
+  const refreshData = async () => {
+    setIsLoading(true);
+    const [fetchedItems, fetchedWorks, fetchedProxies] = await Promise.all([
+        StorageService.getItems(),
+        StorageService.getWorks(),
+        StorageService.getProxies()
+    ]);
+    setItems(fetchedItems);
+    setWorks(fetchedWorks);
+    setProxies(fetchedProxies);
+    setIsLoading(false);
   };
 
   // --- Computed ---
@@ -103,7 +120,7 @@ export const GoodsList: React.FC = () => {
               count: workItems.length,
               categories: categoryStats 
           };
-      }).sort((a, b) => b.total - a.total); // Sort by highest value
+      }).sort((a, b) => b.total - a.total);
 
       return { grandTotal, workStats };
   }, [items, works]);
@@ -112,13 +129,13 @@ export const GoodsList: React.FC = () => {
 
   // --- Handlers ---
 
-  const handleCreateWork = () => {
+  const handleCreateWork = async () => {
     if (newWorkName.trim()) {
-      const work = StorageService.addWork(newWorkName);
-      setWorks(StorageService.getWorks());
+      const work = await StorageService.addWork(newWorkName);
       setSelectedWorkId(work.id);
       setNewWorkName('');
       setIsAddWorkOpen(false);
+      refreshData();
     }
   };
 
@@ -133,9 +150,9 @@ export const GoodsList: React.FC = () => {
     }
   };
 
-  const handleUpdateWorkName = () => {
+  const handleUpdateWorkName = async () => {
     if (selectedWorkId && editWorkName.trim()) {
-      StorageService.updateWork(selectedWorkId, editWorkName);
+      await StorageService.updateWork(selectedWorkId, editWorkName);
       refreshData();
       alert('作品名稱已更新');
     }
@@ -144,31 +161,44 @@ export const GoodsList: React.FC = () => {
   const handleDeleteWork = () => {
     if (!selectedWorkId || !currentWork) return;
     
-    if (window.confirm(`⚠️ 危險動作\n\n確定要刪除作品「${currentWork.name}」嗎？\n\n注意：該作品底下的【所有周邊】也會一併被刪除！此動作無法復原。`)) {
-        try {
-            StorageService.deleteWork(selectedWorkId);
-            setSelectedWorkId(null);
-            setSelectedCategoryId(null);
-            setIsManagerOpen(false);
-            refreshData();
-        } catch (e) {
-            alert('刪除失敗');
-            console.error(e);
+    setConfirmConfig({
+        isOpen: true,
+        title: '⚠️ 危險動作',
+        message: (
+            <span>
+                確定要刪除作品「<span className="font-bold text-gray-900">{currentWork.name}</span>」嗎？<br/><br/>
+                <span className="text-red-500 font-bold">注意：該作品底下的【所有周邊】也會一併被刪除！</span><br/>
+                此動作無法復原。
+            </span>
+        ),
+        isDangerous: true,
+        onConfirm: async () => {
+            try {
+                await StorageService.deleteWork(selectedWorkId);
+                setSelectedWorkId(null);
+                setSelectedCategoryId(null);
+                setIsManagerOpen(false);
+                refreshData();
+            } catch (e) {
+                alert('刪除失敗');
+                console.error(e);
+            }
+            setConfirmConfig(null);
         }
-    }
+    });
   };
 
-  const handleAddCategory = () => {
+  const handleAddCategory = async () => {
     if (selectedWorkId && newCategoryName.trim()) {
-      StorageService.addCategoryToWork(selectedWorkId, newCategoryName);
+      await StorageService.addCategoryToWork(selectedWorkId, newCategoryName);
       setNewCategoryName('');
       refreshData();
     }
   };
 
-  const handleUpdateCategory = (catId: string) => {
+  const handleUpdateCategory = async (catId: string) => {
     if (selectedWorkId && editingCatName.trim()) {
-      StorageService.updateCategory(selectedWorkId, catId, editingCatName);
+      await StorageService.updateCategory(selectedWorkId, catId, editingCatName);
       setEditingCatId(null);
       refreshData();
     }
@@ -176,13 +206,21 @@ export const GoodsList: React.FC = () => {
 
   const handleDeleteCategory = (catId: string, catName: string) => {
       if (!selectedWorkId) return;
-      if (window.confirm(`確定要刪除分類「${catName}」嗎？\n\n該分類下的周邊也會一併刪除。`)) {
-          StorageService.deleteCategory(selectedWorkId, catId);
-          if (selectedCategoryId === catId) {
-              setSelectedCategoryId(null);
+      
+      setConfirmConfig({
+          isOpen: true,
+          title: '刪除分類',
+          message: `確定要刪除分類「${catName}」嗎？\n該分類下的周邊也會一併刪除。`,
+          isDangerous: true,
+          onConfirm: async () => {
+            await StorageService.deleteCategory(selectedWorkId, catId);
+            if (selectedCategoryId === catId) {
+                setSelectedCategoryId(null);
+            }
+            refreshData();
+            setConfirmConfig(null);
           }
-          refreshData();
-      }
+      });
   };
 
   const openForm = (item?: GoodsItem) => {
@@ -206,7 +244,7 @@ export const GoodsList: React.FC = () => {
     setIsFormOpen(true);
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.workId || !formData.categoryId) {
       alert('請填寫完整資訊');
@@ -224,34 +262,38 @@ export const GoodsList: React.FC = () => {
 
     try {
         if (editingItem) {
-          StorageService.updateItem(payload);
+          await StorageService.updateItem(payload);
         } else {
-          StorageService.addItem(payload);
+          await StorageService.addItem(payload);
         }
         setIsFormOpen(false);
         refreshData();
     } catch (error) {
         console.error(error);
-        alert('儲存失敗！可能是因為圖片太大導致瀏覽器儲存空間不足。\n請嘗試刪除一些舊資料。');
+        alert('儲存失敗！');
     }
   };
 
   const handleDeleteItem = (id: string, e?: React.MouseEvent) => {
-      if (e) {
-        e.stopPropagation();
-        e.preventDefault();
-      }
+      e?.stopPropagation();
+      e?.preventDefault();
       
-      // Removed setTimeout logic to fix deletion issues on some devices
-      if(window.confirm('確定要刪除這個周邊嗎？')) {
-          StorageService.deleteItem(id);
-          // If we are currently editing this item (e.g. from modal), close modal
-          if (editingItem?.id === id) {
-              setIsFormOpen(false);
-              setEditingItem(null);
+      setConfirmConfig({
+          isOpen: true,
+          title: '刪除周邊',
+          message: '確定要刪除這個周邊嗎？此動作無法復原。',
+          isDangerous: true,
+          onConfirm: async () => {
+              await StorageService.deleteItem(id);
+              // If we are currently editing this item (e.g. from modal), close modal
+              if (editingItem?.id === id) {
+                  setIsFormOpen(false);
+                  setEditingItem(null);
+              }
+              refreshData();
+              setConfirmConfig(null);
           }
-          refreshData();
-      }
+      });
   };
 
   // --- Render Helpers ---
@@ -272,12 +314,16 @@ export const GoodsList: React.FC = () => {
   };
 
   // Safe Input Handler for Numbers
-  const handleNumberInput = (field: string, val: string) => {
+  const handleNumberInput = (field: keyof GoodsItem, val: string) => {
       setFormData({
           ...formData,
           [field]: val === '' ? ('' as any) : Number(val)
       });
   };
+
+  if (isLoading && items.length === 0) {
+      return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
+  }
 
   return (
     // Fixed height container for App-like layout (Viewport - Nav Height)
@@ -286,26 +332,24 @@ export const GoodsList: React.FC = () => {
       <aside className="hidden md:block w-64 bg-white/60 backdrop-blur-sm border-r border-primary-light flex-shrink-0 h-full overflow-y-auto custom-scrollbar">
         <div className="p-4 border-b border-primary-light flex justify-between items-center bg-primary-light/30 sticky top-0 z-10 backdrop-blur-md">
           <h2 className="font-bold text-gray-700 flex items-center gap-2">
-            <span className="text-xl">📚</span> 作品列表
+            <Library size={20} className="text-gray-600" /> 作品列表
           </h2>
-          <button type="button" onClick={() => setIsAddWorkOpen(true)} className="p-1.5 hover:bg-white bg-white/50 text-gray-600 rounded-full shadow-sm transition-all hover:scale-105 hover:text-primary-dark cursor-pointer">
+          <button onClick={() => setIsAddWorkOpen(true)} className="p-1.5 hover:bg-white bg-white/50 text-gray-600 rounded-full shadow-sm transition-all hover:scale-105 hover:text-primary-dark cursor-pointer">
             <Plus size={18} className="pointer-events-none" />
           </button>
         </div>
         <div className="py-2 space-y-0.5">
           <button
-            type="button"
             onClick={() => { setSelectedWorkId(null); setSelectedCategoryId(null); }}
-            className={`w-full text-left px-5 py-3 text-sm transition font-bold border-l-4 hover:bg-primary-light/50 cursor-pointer ${!selectedWorkId ? 'border-primary bg-primary-light/50 text-gray-900' : 'border-transparent text-gray-500'}`}
+            className={`w-full text-left px-5 py-3 text-sm transition font-bold border-l-4 hover:bg-primary-light/50 ${!selectedWorkId ? 'border-primary bg-primary-light/50 text-gray-900' : 'border-transparent text-gray-500'}`}
           >
             全部作品
           </button>
           {works.map(work => (
             <div key={work.id} className="relative group">
                 <button
-                  type="button"
                   onClick={() => { setSelectedWorkId(work.id); setSelectedCategoryId(null); }}
-                  className={`w-full text-left px-5 py-3 text-sm transition font-bold truncate border-l-4 hover:bg-primary-light/50 cursor-pointer ${selectedWorkId === work.id ? 'border-primary bg-primary-light/50 text-gray-900' : 'border-transparent text-gray-500'}`}
+                  className={`w-full text-left px-5 py-3 text-sm transition font-bold truncate border-l-4 hover:bg-primary-light/50 ${selectedWorkId === work.id ? 'border-primary bg-primary-light/50 text-gray-900' : 'border-transparent text-gray-500'}`}
                 >
                   {work.name}
                 </button>
@@ -315,8 +359,7 @@ export const GoodsList: React.FC = () => {
         
         {/* Desktop Total Summary in Sidebar */}
         <div className="sticky bottom-0 p-4 bg-gradient-to-t from-white to-white/90 backdrop-blur-sm border-t border-primary-light">
-           <button
-             type="button"
+           <button 
              onClick={() => setIsStatsOpen(true)}
              className="w-full bg-secondary/10 hover:bg-secondary/20 text-secondary-dark rounded-xl p-3 flex items-center justify-between group transition-colors cursor-pointer"
            >
@@ -340,22 +383,20 @@ export const GoodsList: React.FC = () => {
         <header className="bg-background p-4 border-b border-primary-light flex flex-col gap-4 z-30 shadow-sm flex-shrink-0 transition-colors duration-500">
             {/* Mobile Work Selector */}
             <div className="md:hidden flex items-center gap-4 overflow-x-auto pb-2 no-scrollbar border-b border-primary-light/50">
-                 <button type="button" onClick={() => setIsAddWorkOpen(true)} className="flex-shrink-0 p-2 bg-primary-light text-primary-dark rounded-full shadow-sm cursor-pointer">
+                 <button onClick={() => setIsAddWorkOpen(true)} className="flex-shrink-0 p-2 bg-primary-light text-primary-dark rounded-full shadow-sm cursor-pointer">
                     <Plus size={16} className="pointer-events-none" />
                  </button>
-                 <button
-                    type="button"
+                 <button 
                     onClick={() => { setSelectedWorkId(null); setSelectedCategoryId(null); }}
-                    className={`whitespace-nowrap px-2 py-2 text-sm font-bold transition border-b-2 cursor-pointer ${!selectedWorkId ? 'border-primary text-gray-900' : 'border-transparent text-gray-500'}`}
+                    className={`whitespace-nowrap px-2 py-2 text-sm font-bold transition border-b-2 ${!selectedWorkId ? 'border-primary text-gray-900' : 'border-transparent text-gray-500'}`}
                  >
                     全部作品
                  </button>
                  {works.map(w => (
                      <button
                         key={w.id}
-                        type="button"
                         onClick={() => { setSelectedWorkId(w.id); setSelectedCategoryId(null); }}
-                        className={`whitespace-nowrap px-2 py-2 text-sm font-bold transition border-b-2 cursor-pointer ${selectedWorkId === w.id ? 'border-primary text-gray-900' : 'border-transparent text-gray-500'}`}
+                        className={`whitespace-nowrap px-2 py-2 text-sm font-bold transition border-b-2 ${selectedWorkId === w.id ? 'border-primary text-gray-900' : 'border-transparent text-gray-500'}`}
                      >
                         {w.name}
                      </button>
@@ -367,8 +408,7 @@ export const GoodsList: React.FC = () => {
              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full md:max-w-xl pb-1">
                 {selectedWorkId && currentWork ? (
                   <>
-                    <button
-                        type="button"
+                    <button 
                         onClick={openManager}
                         className="flex-shrink-0 p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full mr-2 transition-colors cursor-pointer"
                         title="管理作品與分類"
@@ -376,30 +416,28 @@ export const GoodsList: React.FC = () => {
                         <Settings size={18} className="pointer-events-none" />
                     </button>
                     <button
-                        type="button"
                         onClick={() => setSelectedCategoryId(null)}
-                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition cursor-pointer ${!selectedCategoryId ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-primary-light hover:border-gray-300'}`}
+                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition ${!selectedCategoryId ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-primary-light hover:border-gray-300'}`}
                     >
                         全部
                     </button>
                     {currentWork.categories.map(cat => (
                         <button
                             key={cat.id}
-                            type="button"
                             onClick={() => setSelectedCategoryId(cat.id)}
-                            className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition cursor-pointer ${selectedCategoryId === cat.id ? 'bg-primary text-gray-900 border-primary' : 'bg-white text-gray-600 border-primary-light hover:border-primary/50'}`}
+                            className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedCategoryId === cat.id ? 'bg-primary text-gray-900 border-primary' : 'bg-white text-gray-600 border-primary-light hover:border-primary/50'}`}
                         >
                             {cat.name}
                         </button>
                     ))}
-                    <button type="button" onClick={openManager} className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs text-gray-400 border-2 border-dashed border-gray-300 hover:bg-primary-light hover:border-primary hover:text-primary-dark flex items-center gap-1 font-bold cursor-pointer">
+                    <button onClick={openManager} className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs text-gray-400 border-2 border-dashed border-gray-300 hover:bg-primary-light hover:border-primary hover:text-primary-dark flex items-center gap-1 font-bold cursor-pointer">
                         <Plus size={14} className="pointer-events-none" /> 編輯
                     </button>
                   </>
                 ) : (
                     <div className="flex items-center gap-2">
                          <div className="text-lg font-black text-gray-800 tracking-tight flex items-center gap-2">
-                            <span className="text-xl">✨</span> 周邊一覽
+                            <Sparkle size={20} className="text-primary-dark" /> 周邊一覽
                          </div>
                     </div>
                 )}
@@ -407,8 +445,7 @@ export const GoodsList: React.FC = () => {
 
              <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 md:ml-auto">
                 {/* Mobile Stats Button (View Detailed Breakdown) */}
-                <button
-                    type="button"
+                <button 
                     onClick={() => setIsStatsOpen(true)}
                     className="md:hidden shrink-0 bg-white border-2 border-primary-light text-primary-dark p-2 rounded-full shadow-sm cursor-pointer"
                 >
@@ -445,12 +482,11 @@ export const GoodsList: React.FC = () => {
                     <ArrowUpDown className="absolute left-2.5 top-2.5 text-gray-400 w-3.5 h-3.5 pointer-events-none" />
                 </div>
 
-                <button
-                    type="button"
-                    onClick={() => openForm()}
+                <button 
+                    onClick={() => openForm()} 
                     className="shrink-0 bg-primary hover:bg-primary-dark text-gray-900 pl-4 pr-5 py-2 rounded-full flex items-center gap-2 text-sm shadow-md shadow-primary/30 transition-all hover:-translate-y-0.5 cursor-pointer"
                 >
-                    <Plus size={18} strokeWidth={3} className="pointer-events-none" />
+                    <Plus size={18} strokeWidth={3} className="pointer-events-none" /> 
                     <span className="hidden sm:inline font-bold pointer-events-none">新增</span>
                 </button>
              </div>
@@ -477,7 +513,7 @@ export const GoodsList: React.FC = () => {
                     <div 
                         key={item.id} 
                         onClick={() => openForm(item)}
-                        className="bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer"
+                        className="bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative"
                     >
                         <div className="relative aspect-square bg-gray-50 overflow-hidden m-1 md:m-2 rounded-lg md:rounded-2xl">
                             {item.image ? (
@@ -495,22 +531,27 @@ export const GoodsList: React.FC = () => {
                                 </span>
                             </div>
 
-                            {/* NEW: Condition Tag (Top Left) */}
+                            {/* Condition Tag (Top Left) */}
                             <div className="absolute top-1 left-1 md:top-2 md:left-2 flex flex-col gap-1 items-start z-10">
                                 <span className={`px-1.5 py-0.5 md:px-2 md:py-0.5 rounded-md text-[8px] md:text-[10px] font-bold border shadow-sm backdrop-blur-md bg-white/95 flex items-center gap-0.5 ${getConditionColor(item.condition)}`}>
-                                    {item.condition === ConditionStatus.NEW && <Sparkles size={8} className="md:w-3 md:h-3" />}
+                                    {item.condition === ConditionStatus.NEW && <Sparkle size={8} className="md:w-3 md:h-3" />}
                                     {item.condition || ConditionStatus.NEW}
                                 </span>
                             </div>
 
-                            {/* Hover Edit Overlay - Visible on Desktop Hover */}
+                            {/* Hover Edit/Delete Overlay - Visible on Desktop Hover */}
                             <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[1px] opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-col md:flex-row items-center justify-center gap-1 md:gap-3 z-20 pointer-events-none md:pointer-events-auto">
-                                <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); openForm(item); }}
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); openForm(item); }} 
                                     className="bg-white text-gray-700 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
                                 >
                                     <Edit2 size={14} className="pointer-events-none"/>
+                                </button>
+                                <button 
+                                    onClick={(e) => handleDeleteItem(item.id, e)} 
+                                    className="bg-white text-red-400 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
+                                >
+                                    <Trash2 size={14} className="pointer-events-none"/>
                                 </button>
                             </div>
                         </div>
@@ -569,30 +610,30 @@ export const GoodsList: React.FC = () => {
                         <Search size={48} className="text-primary-light" />
                     </div>
                     <p className="font-medium">沒有找到相關周邊</p>
-                    <button type="button" onClick={() => openForm()} className="mt-4 text-gray-600 bg-primary/20 px-4 py-2 rounded-full text-sm font-bold hover:bg-primary/40 transition cursor-pointer">新增第一筆資料？</button>
+                    <button onClick={() => openForm()} className="mt-4 text-gray-600 bg-primary/20 px-4 py-2 rounded-full text-sm font-bold hover:bg-primary/40 transition">新增第一筆資料？</button>
                 </div>
             )}
         </div>
       </main>
 
       {/* --- Modals --- */}
-
+      
       {/* 1. Add Work Modal */}
       {isAddWorkOpen && (
           <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl border-4 border-white">
                   <h3 className="text-xl font-bold mb-6 text-center text-gray-800">新增作品分類</h3>
-                  <input
+                  <input 
                     autoFocus
-                    type="text"
-                    value={newWorkName}
-                    onChange={e => setNewWorkName(e.target.value)}
-                    className="w-full border-2 border-gray-100 rounded-xl p-3 mb-6 focus:border-primary focus:outline-none text-center font-medium bg-white text-gray-900 placeholder-gray-400"
+                    type="text" 
+                    value={newWorkName} 
+                    onChange={e => setNewWorkName(e.target.value)} 
+                    className="w-full border-2 border-gray-100 rounded-xl p-3 mb-6 focus:border-primary focus:outline-none text-center font-medium bg-white text-gray-900 placeholder-gray-400" 
                     placeholder="作品名稱 (例如: 排球少年)"
                   />
                   <div className="flex gap-3">
-                      <button type="button" onClick={() => setIsAddWorkOpen(false)} className="flex-1 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold transition cursor-pointer">取消</button>
-                      <button type="button" onClick={handleCreateWork} className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark font-bold shadow-lg shadow-primary/30 transition cursor-pointer">建立</button>
+                      <button onClick={() => setIsAddWorkOpen(false)} className="flex-1 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold transition">取消</button>
+                      <button onClick={handleCreateWork} className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark font-bold shadow-lg shadow-primary/30 transition">建立</button>
                   </div>
               </div>
           </div>
@@ -607,23 +648,21 @@ export const GoodsList: React.FC = () => {
                         <Settings size={20} className="text-gray-400" />
                         管理：{currentWork.name}
                       </h3>
-                      <button type="button" onClick={() => setIsManagerOpen(false)} className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-400 flex items-center justify-center transition-colors cursor-pointer">
+                      <button onClick={() => setIsManagerOpen(false)} className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-400 flex items-center justify-center transition-colors">
                           <X size={20} />
                       </button>
                   </div>
 
                   <div className="flex border-b border-gray-100">
-                      <button
-                        type="button"
+                      <button 
                         onClick={() => setManagerTab('categories')}
-                        className={`flex-1 py-3 font-bold text-sm transition-colors cursor-pointer ${managerTab === 'categories' ? 'text-primary-dark border-b-2 border-primary bg-primary/5' : 'text-gray-400 hover:bg-gray-50'}`}
+                        className={`flex-1 py-3 font-bold text-sm transition-colors ${managerTab === 'categories' ? 'text-primary-dark border-b-2 border-primary bg-primary/5' : 'text-gray-400 hover:bg-gray-50'}`}
                       >
                         分類管理
                       </button>
-                      <button
-                        type="button"
+                      <button 
                         onClick={() => setManagerTab('work')}
-                        className={`flex-1 py-3 font-bold text-sm transition-colors cursor-pointer ${managerTab === 'work' ? 'text-primary-dark border-b-2 border-primary bg-primary/5' : 'text-gray-400 hover:bg-gray-50'}`}
+                        className={`flex-1 py-3 font-bold text-sm transition-colors ${managerTab === 'work' ? 'text-primary-dark border-b-2 border-primary bg-primary/5' : 'text-gray-400 hover:bg-gray-50'}`}
                       >
                         作品設定
                       </button>
@@ -640,7 +679,7 @@ export const GoodsList: React.FC = () => {
                                     placeholder="新增分類 (例如: 拍立得)"
                                     className="flex-1 border-2 border-gray-100 rounded-xl px-4 py-2 focus:border-primary focus:outline-none bg-white text-gray-900 font-medium text-sm"
                                   />
-                                  <button type="button" onClick={handleAddCategory} disabled={!newCategoryName.trim()} className="bg-gray-800 text-white px-4 rounded-xl font-bold text-sm hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                                  <button onClick={handleAddCategory} disabled={!newCategoryName.trim()} className="bg-gray-800 text-white px-4 rounded-xl font-bold text-sm hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                                     新增
                                   </button>
                               </div>
@@ -657,28 +696,28 @@ export const GoodsList: React.FC = () => {
                                                     onChange={e => setEditingCatName(e.target.value)}
                                                     className="flex-1 border-b-2 border-primary focus:outline-none font-bold text-gray-900 bg-transparent px-1"
                                                   />
-                                                  <button type="button" onClick={() => handleUpdateCategory(cat.id)} className="text-green-500 hover:bg-green-50 p-1 rounded cursor-pointer">
+                                                  <button onClick={() => handleUpdateCategory(cat.id)} className="text-green-500 hover:bg-green-50 p-1 rounded">
                                                       <Check size={16} />
                                                   </button>
-                                                  <button type="button" onClick={() => setEditingCatId(null)} className="text-gray-400 hover:bg-gray-50 p-1 rounded cursor-pointer">
+                                                  <button onClick={() => setEditingCatId(null)} className="text-gray-400 hover:bg-gray-50 p-1 rounded">
                                                       <X size={16} />
                                                   </button>
                                               </div>
                                           ) : (
                                               <>
                                                   <span className="flex-1 font-bold text-gray-600 px-1">{cat.name}</span>
-                                                  <div className="flex gap-2">
-                                                      <button
+                                                  <div className="flex gap-1">
+                                                      <button 
                                                         onClick={() => { setEditingCatId(cat.id); setEditingCatName(cat.name); }}
-                                                        className="p-2 md:p-2 min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center text-gray-400 hover:text-primary-dark hover:bg-primary-light rounded-lg transition-colors cursor-pointer"
+                                                        className="p-2 text-gray-400 hover:text-primary-dark hover:bg-primary-light rounded-lg transition-colors cursor-pointer"
                                                       >
-                                                          <Edit2 size={18} className="pointer-events-none" />
+                                                          <Edit2 size={16} className="pointer-events-none" />
                                                       </button>
-                                                      <button
+                                                      <button 
                                                         onClick={() => handleDeleteCategory(cat.id, cat.name)}
-                                                        className="p-2 md:p-2 min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                                       >
-                                                          <Trash2 size={18} className="pointer-events-none" />
+                                                          <Trash2 size={16} className="pointer-events-none" />
                                                       </button>
                                                   </div>
                                               </>
@@ -701,7 +740,7 @@ export const GoodsList: React.FC = () => {
                                         onChange={e => setEditWorkName(e.target.value)}
                                         className="flex-1 border-2 border-gray-100 rounded-xl p-3 focus:border-primary focus:outline-none font-medium text-gray-900 bg-white"
                                       />
-                                      <button type="button" onClick={handleUpdateWorkName} className="bg-primary text-gray-900 px-5 rounded-xl font-bold shadow-md shadow-primary/20 hover:bg-primary-dark cursor-pointer">
+                                      <button onClick={handleUpdateWorkName} className="bg-primary text-gray-900 px-5 rounded-xl font-bold shadow-md shadow-primary/20 hover:bg-primary-dark cursor-pointer">
                                           儲存
                                       </button>
                                   </div>
@@ -714,8 +753,7 @@ export const GoodsList: React.FC = () => {
                                   <p className="text-xs text-gray-500 mb-4">
                                       刪除此作品將會<span className="font-bold text-red-500">永久刪除</span>該作品底下的所有分類與周邊商品資料。此動作無法復原。
                                   </p>
-                                  <button
-                                    type="button"
+                                  <button 
                                     onClick={handleDeleteWork}
                                     className="w-full py-3 border-2 border-red-100 text-red-500 bg-red-50/50 rounded-xl font-bold hover:bg-red-100 hover:border-red-200 transition-colors cursor-pointer"
                                   >
@@ -729,7 +767,7 @@ export const GoodsList: React.FC = () => {
           </div>
       )}
 
-      {/* 3. Statistics Modal */}
+      {/* 4. Statistics Modal */}
       {isStatsOpen && (
           <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-[2.5rem] w-full max-w-md shadow-2xl border-4 border-white flex flex-col max-h-[85vh] overflow-hidden">
@@ -741,7 +779,7 @@ export const GoodsList: React.FC = () => {
                           </h3>
                           <p className="text-xs text-gray-500 font-bold mt-1">目前所有收藏的總價值統計</p>
                       </div>
-                      <button type="button" onClick={() => setIsStatsOpen(false)} className="w-8 h-8 rounded-full bg-white text-gray-400 hover:bg-gray-100 flex items-center justify-center transition-colors shadow-sm cursor-pointer">
+                      <button onClick={() => setIsStatsOpen(false)} className="w-8 h-8 rounded-full bg-white text-gray-400 hover:bg-gray-100 flex items-center justify-center transition-colors shadow-sm cursor-pointer">
                           <X size={20} />
                       </button>
                   </div>
@@ -761,10 +799,9 @@ export const GoodsList: React.FC = () => {
                       <div className="space-y-3">
                           {statistics.workStats.map((stat) => (
                               <div key={stat.id} className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                  <button
-                                    type="button"
+                                  <button 
                                     onClick={() => setExpandedStatWorkId(expandedStatWorkId === stat.id ? null : stat.id)}
-                                    className="w-full flex items-center justify-between p-4 bg-white hover:bg-gray-50 transition-colors cursor-pointer"
+                                    className="w-full flex items-center justify-between p-4 bg-white hover:bg-gray-50 transition-colors"
                                   >
                                       <div className="flex items-center gap-3">
                                           <div className={`transition-transform duration-300 ${expandedStatWorkId === stat.id ? 'rotate-90' : ''}`}>
@@ -807,26 +844,28 @@ export const GoodsList: React.FC = () => {
           </div>
       )}
 
-      {/* 4. Item Form Modal */}
+      {/* 3. Item Form Modal */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
             <div className="bg-white rounded-[2rem] w-full max-w-2xl my-8 overflow-hidden shadow-2xl flex flex-col max-h-[90vh] border-4 border-white">
                 <div className="px-8 py-5 border-b border-gray-100 bg-white flex justify-between items-center flex-shrink-0">
                     <h3 className="font-black text-xl text-gray-800 flex items-center gap-2">
-                        {editingItem ? '✏️ 編輯周邊' : '✨ 新增周邊'}
+                        {editingItem ? <Edit2 size={24} className="text-primary-dark"/> : <Sparkle size={24} className="text-primary-dark"/>}
+                        {editingItem ? ' 編輯周邊' : ' 新增周邊'}
                     </h3>
-                    <button type="button" onClick={() => setIsFormOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors cursor-pointer">✕</button>
+                    <button onClick={() => setIsFormOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors cursor-pointer">✕</button>
                 </div>
                 
                 <form onSubmit={handleFormSubmit} className="p-8 overflow-y-auto custom-scrollbar space-y-8">
                     {/* Image Section */}
                     <div className="flex justify-center">
                         <div className="w-full max-w-xs">
-                             <ImageCropper
-                                initialImage={formData.image}
-                                onImageCropped={(base64) => setFormData(prev => ({ ...prev, image: base64 }))}
+                             <ImageCropper 
+                                key={editingItem ? editingItem.id : 'new-item'}
+                                initialImage={formData.image} 
+                                onImageCropped={(base64) => setFormData(prev => ({ ...prev, image: base64 }))} 
                              />
-                             <p className="text-xs text-center text-gray-400 mt-3 font-medium">上傳後可選擇性裁切為正方形</p>
+                             <p className="text-xs text-center text-gray-400 mt-3 font-medium">支援上傳後裁切為正方形</p>
                         </div>
                     </div>
 
@@ -847,8 +886,8 @@ export const GoodsList: React.FC = () => {
                                 <label className="block text-sm font-bold text-gray-500 mb-2 ml-1">商品原文名稱 <span className="text-xs font-normal text-gray-400">(非必填)</span></label>
                                 <input
                                     type="text"
-                                    value={formData.originalName ?? ''}
-                                    onChange={e => setFormData(prev => ({ ...prev, originalName: e.target.value }))}
+                                    value={formData.originalName || ''}
+                                    onChange={e => setFormData({ ...formData, originalName: e.target.value })}
                                     className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 font-medium bg-white text-gray-900 text-sm"
                                     placeholder="例如: 2024 Birthday Badge / 2024年バースデー缶バッジ"
                                 />
@@ -940,7 +979,7 @@ export const GoodsList: React.FC = () => {
                              </div>
                         </div>
 
-                        {/* NEW: Condition Status */}
+                        {/* Condition Status */}
                         <div>
                              <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">商品狀況</label>
                              <div className="relative">
@@ -1049,11 +1088,10 @@ export const GoodsList: React.FC = () => {
                         <button
                             type="button"
                             onClick={(e) => handleDeleteItem(editingItem.id, e)}
-                            className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center gap-2 cursor-pointer min-w-[80px]"
+                            className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center cursor-pointer"
                             title="刪除此周邊"
                         >
                             <Trash2 size={20} className="pointer-events-none" />
-                            <span className="pointer-events-none">刪除</span>
                         </button>
                     )}
                     <button
@@ -1072,6 +1110,34 @@ export const GoodsList: React.FC = () => {
                     </button>
                 </div>
             </div>
+        </div>
+      )}
+
+      {/* 5. Custom Confirm Dialog */}
+      {confirmConfig && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border-2 border-white animate-in zoom-in-95">
+              <div className="p-6">
+                 <h3 className="text-lg font-black text-gray-800 mb-3">{confirmConfig.title}</h3>
+                 <div className="text-sm font-medium text-gray-600 mb-6 leading-relaxed">
+                    {confirmConfig.message}
+                 </div>
+                 <div className="flex gap-3">
+                    <button 
+                      onClick={() => setConfirmConfig(null)}
+                      className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition cursor-pointer"
+                    >
+                       取消
+                    </button>
+                    <button 
+                      onClick={confirmConfig.onConfirm}
+                      className={`flex-1 py-2.5 text-white rounded-xl font-bold shadow-md transition transform active:scale-95 cursor-pointer ${confirmConfig.isDangerous ? 'bg-red-500 hover:bg-red-600 shadow-red-200' : 'bg-primary text-gray-900 hover:bg-primary-dark'}`}
+                    >
+                       確認刪除
+                    </button>
+                 </div>
+              </div>
+           </div>
         </div>
       )}
     </div>

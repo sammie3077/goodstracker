@@ -68,6 +68,22 @@ export interface GoodsItem {
   createdAt: number;
 }
 
+export interface GallerySpec {
+  id: string;
+  name: string;
+  isOwned: boolean;
+}
+
+export interface GalleryItem {
+  id: string;
+  workId: string;
+  name: string;
+  originalName?: string;
+  image: string; // Base64
+  specs: GallerySpec[];
+  createdAt: number;
+}
+
 export type SortOption = 
   | 'created_desc' | 'created_asc'
   | 'price_desc' | 'price_asc'
