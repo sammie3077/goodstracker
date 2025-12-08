@@ -358,19 +358,13 @@ export const GalleryList: React.FC = () => {
                                     </span>
                                 </div>
 
-                                {/* Hover Edit/Delete Overlay */}
+                                {/* Hover Edit Overlay */}
                                 <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[1px] opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-col md:flex-row items-center justify-center gap-1 md:gap-3 z-20 pointer-events-none md:pointer-events-auto">
-                                    <button 
-                                        onClick={(e) => { e.stopPropagation(); openForm(item); }} 
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); openForm(item); }}
                                         className="bg-white text-gray-700 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
                                     >
                                         <Edit2 size={14} className="pointer-events-none"/>
-                                    </button>
-                                    <button 
-                                        onClick={(e) => handleDeleteItem(item.id, e)} 
-                                        className="bg-white text-red-400 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
-                                    >
-                                        <Trash2 size={14} className="pointer-events-none"/>
                                     </button>
                                 </div>
                             </div>

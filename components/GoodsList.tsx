@@ -310,6 +310,7 @@ export const GoodsList: React.FC = () => {
 
   const getConditionColor = (cond?: ConditionStatus) => {
       if (cond === ConditionStatus.OPENED) return 'bg-orange-50 text-orange-600 border-orange-100';
+      if (cond === ConditionStatus.OPENED_CHECKED) return 'bg-blue-50 text-blue-600 border-blue-100';
       return 'bg-cyan-50 text-cyan-600 border-cyan-100'; // Default New
   };
 
@@ -539,19 +540,13 @@ export const GoodsList: React.FC = () => {
                                 </span>
                             </div>
 
-                            {/* Hover Edit/Delete Overlay - Visible on Desktop Hover */}
+                            {/* Hover Edit Overlay - Visible on Desktop Hover */}
                             <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[1px] opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-col md:flex-row items-center justify-center gap-1 md:gap-3 z-20 pointer-events-none md:pointer-events-auto">
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); openForm(item); }} 
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); openForm(item); }}
                                     className="bg-white text-gray-700 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
                                 >
                                     <Edit2 size={14} className="pointer-events-none"/>
-                                </button>
-                                <button 
-                                    onClick={(e) => handleDeleteItem(item.id, e)} 
-                                    className="bg-white text-red-400 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
-                                >
-                                    <Trash2 size={14} className="pointer-events-none"/>
                                 </button>
                             </div>
                         </div>

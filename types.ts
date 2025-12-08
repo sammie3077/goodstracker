@@ -8,6 +8,7 @@ export enum ItemStatus {
 
 export enum ConditionStatus {
   NEW = '全新未拆',
+  OPENED_CHECKED = '僅拆檢',
   OPENED = '拆擺過',
 }
 
