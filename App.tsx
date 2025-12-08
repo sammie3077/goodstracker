@@ -167,11 +167,31 @@ const App: React.FC = () => {
   const handleExport = async () => {
     try {
         const data = await StorageService.getAllData();
+
+        // Debug: Log data counts
+        console.log('Backup data:', {
+          items: data.items.length,
+          gallery: data.gallery.length,
+          works: data.works.length,
+          proxies: data.proxies.length,
+        });
+
+        // Validate data exists
+        const totalRecords = data.items.length + data.gallery.length + data.works.length;
+        if (totalRecords === 0) {
+          const confirm = window.confirm(
+            '⚠️ 警告：目前沒有任何資料可以匯出。\n\n' +
+            '這可能表示資料庫尚未載入完成，或確實沒有資料。\n\n' +
+            '是否仍要下載空白備份檔？'
+          );
+          if (!confirm) return;
+        }
+
         const fileName = `goods-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
         const json = JSON.stringify(data, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const href = URL.createObjectURL(blob);
-        
+
         const link = document.createElement('a');
         link.href = href;
         link.download = fileName;
@@ -180,8 +200,8 @@ const App: React.FC = () => {
         document.body.removeChild(link);
         URL.revokeObjectURL(href);
     } catch (e) {
-        console.error(e);
-        alert('匯出失敗，請重試');
+        console.error('Export failed:', e);
+        alert('匯出失敗：' + (e instanceof Error ? e.message : '未知錯誤'));
     }
   };
 

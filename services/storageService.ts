@@ -55,11 +55,21 @@ export const StorageService = {
 
   // --- Backup & Restore ---
   getAllData: async () => {
+    // Ensure DB is initialized before reading
+    await DB.init();
+
+    const [items, gallery, works, proxies] = await Promise.all([
+      DB.getAll<GoodsItem>(STORES.ITEMS),
+      DB.getAll<GalleryItem>(STORES.GALLERY),
+      DB.getAll<Work>(STORES.WORKS),
+      DB.getAll<ProxyService>(STORES.PROXIES),
+    ]);
+
     return {
-      items: await DB.getAll<GoodsItem>(STORES.ITEMS),
-      gallery: await DB.getAll<GalleryItem>(STORES.GALLERY),
-      works: await DB.getAll<Work>(STORES.WORKS),
-      proxies: await DB.getAll<ProxyService>(STORES.PROXIES),
+      items,
+      gallery,
+      works,
+      proxies,
       theme: localStorage.getItem(THEME_KEY) || 'yellow',
       backupDate: new Date().toISOString(),
     };
