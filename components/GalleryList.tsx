@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
 import { GalleryItem, Work, GallerySpec } from '../types';
-import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Library, Sparkle, Loader2 } from 'lucide-react';
+import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Library, Sparkle, Loader2, Search } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
 
 export const GalleryList: React.FC = () => {
@@ -13,6 +13,7 @@ export const GalleryList: React.FC = () => {
   
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GalleryItem | null>(null);
   
@@ -60,12 +61,22 @@ export const GalleryList: React.FC = () => {
   // --- Computed ---
   const filteredItems = useMemo(() => {
     let result = items;
+    // 1. Filter by Work
     if (selectedWorkId) {
       result = result.filter(i => i.workId === selectedWorkId);
     }
+    // 2. Filter by Search Query
+    if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        result = result.filter(i => 
+            i.name.toLowerCase().includes(query) || 
+            (i.originalName && i.originalName.toLowerCase().includes(query))
+        );
+    }
+
     // Sort by newest first
     return result.sort((a, b) => b.createdAt - a.createdAt);
-  }, [items, selectedWorkId]);
+  }, [items, selectedWorkId, searchQuery]);
 
   const currentWork = works.find(w => w.id === selectedWorkId);
 
@@ -295,7 +306,7 @@ export const GalleryList: React.FC = () => {
 
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
              {/* Header Title / Actions */}
-             <div className="flex items-center gap-2 w-full">
+             <div className="flex items-center gap-2 w-full md:w-auto">
                 {selectedWorkId && currentWork ? (
                   <>
                     <button 
@@ -308,12 +319,31 @@ export const GalleryList: React.FC = () => {
                     <h2 className="text-xl font-black text-gray-800">{currentWork.name} - 圖鑑</h2>
                   </>
                 ) : (
-                    <div className="text-lg font-black text-gray-800 tracking-tight flex items-center gap-2">
+                    <div className="text-lg font-black text-gray-800 tracking-tight flex items-center gap-2 mr-2">
                         <Book size={20} className="text-secondary-dark" /> 全部圖鑑
                     </div>
                 )}
+            </div>
+
+            <div className="flex items-center gap-2 w-full md:w-auto">
+                {/* Search Bar */}
+                <div className="relative flex-1 md:w-64 max-w-sm">
+                    <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="搜尋圖鑑..."
+                        className="w-full pl-9 pr-4 py-2 bg-white border-2 border-primary-light rounded-full text-xs md:text-sm focus:outline-none focus:border-primary text-gray-800 shadow-sm"
+                    />
+                    <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
+                     {searchQuery && (
+                        <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                            <X size={14} />
+                        </button>
+                    )}
+                </div>
                 
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-2 flex items-center gap-2">
                     <button 
                         onClick={() => openForm()} 
                         className="bg-primary hover:bg-primary-dark text-gray-900 px-4 py-2 rounded-full flex items-center gap-2 text-sm shadow-md shadow-primary/30 transition-all hover:-translate-y-0.5 cursor-pointer"
@@ -352,19 +382,25 @@ export const GalleryList: React.FC = () => {
                                 
                                 {/* Progress Badge */}
                                 <div className="absolute top-1 right-1 md:top-2 md:right-2 z-10">
-                                    <span className={`px-1.5 py-0.5 md:px-2 md:py-1 rounded-md text-[9px] md:text-xs font-bold border shadow-sm backdrop-blur-md bg-white/95 flex items-center gap-1 ${percent === 100 ? 'text-green-600 border-green-200' : 'text-gray-600 border-gray-100'}`}>
-                                        {percent === 100 && <Check size={10} strokeWidth={4} />}
+                                    <span className={`px-1.5 py-0.5 md:px-2 md:py-1 rounded-md text-[9px] md:text-xs font-bold border shadow-sm backdrop-blur-md bg-white/95 flex items-center gap-1 ${percent === 100 ? 'text-secondary-dark border-secondary/30' : 'text-gray-600 border-gray-100'}`}>
+                                        {percent === 100 && <Check size={10} strokeWidth={4} className="text-secondary-dark" />}
                                         {ownedSpecs}/{totalSpecs}
                                     </span>
                                 </div>
 
-                                {/* Hover Edit Overlay */}
+                                {/* Hover Edit/Delete Overlay */}
                                 <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[1px] opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-col md:flex-row items-center justify-center gap-1 md:gap-3 z-20 pointer-events-none md:pointer-events-auto">
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); openForm(item); }}
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); openForm(item); }} 
                                         className="bg-white text-gray-700 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
                                     >
                                         <Edit2 size={14} className="pointer-events-none"/>
+                                    </button>
+                                    <button 
+                                        onClick={(e) => handleDeleteItem(item.id, e)} 
+                                        className="bg-white text-red-400 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
+                                    >
+                                        <Trash2 size={14} className="pointer-events-none"/>
                                     </button>
                                 </div>
                             </div>
@@ -393,16 +429,16 @@ export const GalleryList: React.FC = () => {
             {filteredItems.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-gray-400">
                     <div className="bg-white p-6 rounded-full mb-4 shadow-sm border border-primary-light">
-                        <Book size={48} className="text-primary-light" />
+                        {searchQuery ? <Search size={48} className="text-primary-light" /> : <Book size={48} className="text-primary-light" />}
                     </div>
-                    <p className="font-medium">沒有圖鑑資料</p>
+                    <p className="font-medium">{searchQuery ? '找不到符合搜尋的圖鑑' : '沒有圖鑑資料'}</p>
                     <button onClick={() => openForm()} className="mt-4 text-gray-600 bg-primary/20 px-4 py-2 rounded-full text-sm font-bold hover:bg-primary/40 transition">新增第一筆圖鑑？</button>
                 </div>
             )}
         </div>
       </main>
 
-      {/* --- Modals --- */}
+      {/* --- Modals (Unchanged) --- */}
       
       {/* 1. Add Work Modal */}
       {isAddWorkOpen && (
@@ -586,7 +622,7 @@ export const GalleryList: React.FC = () => {
                             {formSpecs.length === 0 ? (
                                 <div className="text-center text-gray-400 py-8 text-sm font-medium">
                                     尚未建立規格<br/>
-                                    請使用上方按鈕新增 (例如: 批量新增 &gt; 10)
+                                    請使用上方按鈕新增 (例如: 批量新增 {'>'} 10)
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">

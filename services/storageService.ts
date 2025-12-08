@@ -19,7 +19,7 @@ export const StorageService = {
   init: async (): Promise<boolean> => {
     try {
       await DB.init();
-      
+
       // Check if DB is empty, if so, try to migrate from localStorage
       const works = await DB.getAll<Work>(STORES.WORKS);
       if (works.length === 0) {
@@ -35,17 +35,40 @@ export const StorageService = {
           if (legacyItemsStr) await DB.bulkPut(STORES.ITEMS, JSON.parse(legacyItemsStr));
           if (legacyGalleryStr) await DB.bulkPut(STORES.GALLERY, JSON.parse(legacyGalleryStr));
           if (legacyProxiesStr) await DB.bulkPut(STORES.PROXIES, JSON.parse(legacyProxiesStr));
-          
+
           // Clear legacy data to free up space, but keep theme
           // Note: Comment this out if you want to keep a backup in localStorage for a while
           localStorage.removeItem(LEGACY_STORAGE_KEYS.ITEMS);
           localStorage.removeItem(LEGACY_STORAGE_KEYS.GALLERY);
           localStorage.removeItem(LEGACY_STORAGE_KEYS.WORKS);
           localStorage.removeItem(LEGACY_STORAGE_KEYS.PROXIES);
-          
+
           return true; // Migrated
         }
       }
+
+      // Migrate ConditionStatus from OPENED_CHECKED to CHECKED
+      const migrationKey = 'condition_status_migrated_v1';
+      if (!localStorage.getItem(migrationKey)) {
+        console.log('Migrating ConditionStatus from OPENED_CHECKED to CHECKED...');
+        const items = await DB.getAll<GoodsItem>(STORES.ITEMS);
+        let migratedCount = 0;
+
+        for (const item of items) {
+          // @ts-ignore - accessing old enum value
+          if (item.condition === 'OPENED_CHECKED' || item.condition === '僅拆檢') {
+            item.condition = 'CHECKED' as any;
+            await DB.put(STORES.ITEMS, item);
+            migratedCount++;
+          }
+        }
+
+        localStorage.setItem(migrationKey, 'true');
+        if (migratedCount > 0) {
+          console.log(`Migrated ${migratedCount} items with OPENED_CHECKED status`);
+        }
+      }
+
       return false; // No migration needed
     } catch (e) {
       console.error("DB Init failed", e);

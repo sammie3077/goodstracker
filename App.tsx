@@ -4,11 +4,11 @@ import { GoodsList } from './components/GoodsList';
 import { ProxyManager } from './components/ProxyManager';
 import { GalleryList } from './components/GalleryList';
 import { StorageService } from './services/storageService';
-import { LayoutGrid, Users, Palette, Check, X, Settings, Download, Upload, AlertTriangle, BookOpen, Loader2 } from 'lucide-react';
+import { LayoutGrid, Users, Palette, Check, X, Settings, Download, Upload, AlertTriangle, BookOpen, Loader2, Clock } from 'lucide-react';
 
 // --- Theme Definitions ---
 
-type ThemeId = 'yellow' | 'pink' | 'blue' | 'green' | 'purple' | 'rose';
+type ThemeId = 'yellow' | 'pink' | 'blue' | 'green' | 'purple' | 'rose' | 'teal';
 
 interface ThemeColors {
   primary: string;
@@ -86,6 +86,17 @@ const THEMES: Record<ThemeId, { name: string; colors: ThemeColors }> = {
       background: '#fffefe',   // Lighter Warm White (Almost pure white with tiny pink tint)
     },
   },
+  teal: {
+    name: '湖畔青藍',
+    colors: {
+      primary: '#69b2b2',      // Muted Teal (User provided)
+      primaryLight: '#edf7f7', // Very light teal
+      primaryDark: '#054269',  // Deep Blue (User provided)
+      secondary: '#eec643',    // Ginkgo Gold (Accent)
+      secondaryDark: '#b59321', // Darker Gold
+      background: '#fcfdfd',   // Cool White
+    },
+  },
 };
 
 // Helper to convert Hex to RGB numbers (e.g. "#FF0000" -> "255 0 0") for CSS Variables
@@ -94,6 +105,17 @@ const hexToRgbString = (hex: string): string => {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `${r} ${g} ${b}`;
+};
+
+// Helper to format backup date
+const formatBackupDate = (isoString: string) => {
+  const d = new Date(isoString);
+  const year = d.getFullYear();
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  const hours = d.getHours().toString().padStart(2, '0');
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  return `${year}年${month}月${day}日 ${hours}:${minutes}`;
 };
 
 // --- Icons ---
@@ -129,6 +151,7 @@ const App: React.FC = () => {
   const [currentTheme, setCurrentTheme] = useState<ThemeId>('yellow');
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [lastBackupDate, setLastBackupDate] = useState<string | null>(() => localStorage.getItem('last_backup_date'));
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize DB and load theme
@@ -167,31 +190,11 @@ const App: React.FC = () => {
   const handleExport = async () => {
     try {
         const data = await StorageService.getAllData();
-
-        // Debug: Log data counts
-        console.log('Backup data:', {
-          items: data.items.length,
-          gallery: data.gallery.length,
-          works: data.works.length,
-          proxies: data.proxies.length,
-        });
-
-        // Validate data exists
-        const totalRecords = data.items.length + data.gallery.length + data.works.length;
-        if (totalRecords === 0) {
-          const confirm = window.confirm(
-            '⚠️ 警告：目前沒有任何資料可以匯出。\n\n' +
-            '這可能表示資料庫尚未載入完成，或確實沒有資料。\n\n' +
-            '是否仍要下載空白備份檔？'
-          );
-          if (!confirm) return;
-        }
-
         const fileName = `goods-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
         const json = JSON.stringify(data, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const href = URL.createObjectURL(blob);
-
+        
         const link = document.createElement('a');
         link.href = href;
         link.download = fileName;
@@ -199,9 +202,14 @@ const App: React.FC = () => {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(href);
+
+        // Update last backup date
+        const now = new Date().toISOString();
+        localStorage.setItem('last_backup_date', now);
+        setLastBackupDate(now);
     } catch (e) {
-        console.error('Export failed:', e);
-        alert('匯出失敗：' + (e instanceof Error ? e.message : '未知錯誤'));
+        console.error(e);
+        alert('匯出失敗，請重試');
     }
   };
 
@@ -453,9 +461,19 @@ const App: React.FC = () => {
                       <p className="text-xs text-gray-500">
                           下載所有資料的備份檔案 (.json)。您可以將此檔案傳送到新裝置。
                       </p>
+                      
+                      {lastBackupDate && (
+                        <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100">
+                           <Clock size={14} className="text-secondary-dark" />
+                           <p className="text-xs text-gray-600 font-bold">
+                              上次備份：{formatBackupDate(lastBackupDate)}
+                           </p>
+                        </div>
+                      )}
+
                       <button 
                         onClick={handleExport}
-                        className="w-full py-3 bg-primary-light text-primary-dark font-bold rounded-xl border-2 border-primary hover:bg-primary hover:text-gray-900 transition-colors shadow-sm"
+                        className="w-full py-3 bg-primary-light text-primary-dark font-bold rounded-xl border-2 border-primary hover:bg-primary hover:text-gray-900 transition-colors shadow-sm cursor-pointer"
                       >
                           下載備份檔案
                       </button>
@@ -488,7 +506,7 @@ const App: React.FC = () => {
                       />
                       <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className="w-full py-3 bg-gray-100 text-gray-600 font-bold rounded-xl border-2 border-gray-200 hover:bg-secondary hover:border-secondary hover:text-white transition-colors shadow-sm"
+                        className="w-full py-3 bg-gray-100 text-gray-600 font-bold rounded-xl border-2 border-gray-200 hover:bg-secondary hover:border-secondary hover:text-white transition-colors shadow-sm cursor-pointer"
                       >
                           選取檔案並還原
                       </button>

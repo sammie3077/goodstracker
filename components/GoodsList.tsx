@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
 import { GoodsItem, Work, Category, ItemStatus, PaymentStatus, SourceType, SortOption, ProxyService, ConditionStatus } from '../types';
-import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkle, Library, Loader2 } from 'lucide-react';
+import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkle, Library, Loader2, CircleDollarSign } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
 
 export const GoodsList: React.FC = () => {
@@ -14,7 +14,8 @@ export const GoodsList: React.FC = () => {
   
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null); // Stores ID (specific work) or Name (all works)
+  const [searchQuery, setSearchQuery] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GoodsItem | null>(null);
   
@@ -68,18 +69,64 @@ export const GoodsList: React.FC = () => {
   };
 
   // --- Computed ---
+
+  // Helper to get category name from an item
+  const getItemCategoryName = (item: GoodsItem) => {
+      const work = works.find(w => w.id === item.workId);
+      const cat = work?.categories.find(c => c.id === item.categoryId);
+      return cat?.name;
+  };
+
+  // Get available categories based on view (Specific Work vs All Works)
+  const visibleCategories = useMemo(() => {
+      if (selectedWorkId) {
+          // Return categories for the specific work
+          return works.find(w => w.id === selectedWorkId)?.categories || [];
+      } else {
+          // Return unique category names across all works
+          const uniqueNames = new Set<string>();
+          works.forEach(w => w.categories.forEach(c => uniqueNames.add(c.name)));
+          // Map to a structure similar to Category interface for consistent rendering
+          // We use the name itself as the ID for "All Works" mode
+          return Array.from(uniqueNames).map(name => ({ id: name, name }));
+      }
+  }, [works, selectedWorkId]);
+
   const filteredItems = useMemo(() => {
     let result = items;
+
+    // 1. Filter by Work
     if (selectedWorkId) {
       result = result.filter(i => i.workId === selectedWorkId);
     }
+
+    // 2. Filter by Category
     if (selectedCategoryId) {
-      result = result.filter(i => i.categoryId === selectedCategoryId);
+        if (selectedWorkId) {
+            // In specific work view: match exact Category ID
+            result = result.filter(i => i.categoryId === selectedCategoryId);
+        } else {
+            // In All Works view: match Category Name
+            // selectedCategoryId holds the Name in this mode
+            result = result.filter(i => getItemCategoryName(i) === selectedCategoryId);
+        }
     }
+
+    // 3. Filter by Status
     if (filterStatus !== 'ALL') {
       result = result.filter(i => i.status === filterStatus);
     }
 
+    // 4. Search Query (Name or Original Name)
+    if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        result = result.filter(i => 
+            i.name.toLowerCase().includes(query) || 
+            (i.originalName && i.originalName.toLowerCase().includes(query))
+        );
+    }
+
+    // 5. Sort
     return result.sort((a, b) => {
       switch (sortBy) {
         case 'price_desc': return b.price - a.price;
@@ -92,7 +139,7 @@ export const GoodsList: React.FC = () => {
         case 'created_desc': default: return b.createdAt - a.createdAt;
       }
     });
-  }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus]);
+  }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus, searchQuery, works]);
 
   // Calculate Total Value for Current View
   const currentViewTotal = useMemo(() => {
@@ -103,6 +150,21 @@ export const GoodsList: React.FC = () => {
   const statistics = useMemo(() => {
       const grandTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
       
+      // Calculate Unpaid Amount (Calculated across ALL items, not just filtered)
+      const unpaidTotal = items.reduce((sum, item) => {
+          const totalItemPrice = item.price * item.quantity;
+          
+          if (item.paymentStatus === PaymentStatus.COD) {
+              // Cash on Delivery: Whole amount is unpaid
+              return sum + totalItemPrice;
+          } else if (item.paymentStatus === PaymentStatus.PAID_DEPOSIT) {
+              // Paid Deposit: Total - Deposit is unpaid
+              const deposit = item.depositAmount || 0;
+              return sum + Math.max(0, totalItemPrice - deposit);
+          }
+          return sum;
+      }, 0);
+
       const workStats = works.map(work => {
           const workItems = items.filter(i => i.workId === work.id);
           const total = workItems.reduce((sum, i) => sum + (i.price * i.quantity), 0);
@@ -122,7 +184,7 @@ export const GoodsList: React.FC = () => {
           };
       }).sort((a, b) => b.total - a.total);
 
-      return { grandTotal, workStats };
+      return { grandTotal, unpaidTotal, workStats };
   }, [items, works]);
 
   const currentWork = works.find(w => w.id === selectedWorkId);
@@ -231,7 +293,7 @@ export const GoodsList: React.FC = () => {
       setEditingItem(null);
       setFormData({
         workId: selectedWorkId || (works.length > 0 ? works[0].id : ''),
-        categoryId: selectedCategoryId || '',
+        categoryId: selectedCategoryId && selectedWorkId ? selectedCategoryId : '', // Only pre-fill if in specific work mode
         quantity: 1,
         price: 0,
         status: ItemStatus.PREORDER,
@@ -298,20 +360,34 @@ export const GoodsList: React.FC = () => {
 
   // --- Render Helpers ---
 
+  // Use Theme Colors instead of hardcoded colors
   const getStatusColor = (status: ItemStatus) => {
     switch (status) {
-      case ItemStatus.ARRIVED: return 'bg-green-100 text-green-800 border-green-200';
-      case ItemStatus.PREORDER: return 'bg-blue-100 text-blue-800 border-blue-200';
+      case ItemStatus.ARRIVED: return 'bg-secondary/10 text-secondary-dark border-secondary/20';
+      case ItemStatus.PREORDER: return 'bg-primary/20 text-gray-800 border-primary/30';
       case ItemStatus.NOT_ON_HAND: return 'bg-gray-100 text-gray-600 border-gray-200';
-      case ItemStatus.FOR_SALE: return 'bg-rose-100 text-rose-800 border-rose-200';
+      case ItemStatus.FOR_SALE: return 'bg-white border-dashed border-gray-300 text-gray-500';
       default: return 'bg-gray-100';
     }
   };
 
+  // Use Theme Colors
   const getConditionColor = (cond?: ConditionStatus) => {
-      if (cond === ConditionStatus.OPENED) return 'bg-orange-50 text-orange-600 border-orange-100';
-      if (cond === ConditionStatus.OPENED_CHECKED) return 'bg-blue-50 text-blue-600 border-blue-100';
-      return 'bg-cyan-50 text-cyan-600 border-cyan-100'; // Default New
+      if (cond === ConditionStatus.OPENED) return 'bg-gray-100 text-gray-500 border-gray-200';
+      if (cond === ConditionStatus.CHECKED) return 'bg-primary/20 text-gray-800 border-primary/30';
+      // Default NEW
+      return 'bg-secondary/10 text-secondary-dark border-secondary/20'; 
+  };
+
+  // Payment Status Colors (Themed)
+  const getPaymentStatusColor = (status: PaymentStatus) => {
+    switch (status) {
+      case PaymentStatus.PAID_FULL: return 'bg-secondary/10 text-secondary-dark border-secondary/20';
+      case PaymentStatus.PAID_DEPOSIT: return 'bg-primary/30 text-gray-900 border-primary/40';
+      case PaymentStatus.COD: return 'bg-gray-100 text-gray-500 border-gray-200';
+      case PaymentStatus.FORGOTTEN: return 'bg-gray-200 text-gray-600 border-gray-300';
+      default: return 'bg-gray-100 text-gray-400';
+    }
   };
 
   // Safe Input Handler for Numbers
@@ -381,7 +457,7 @@ export const GoodsList: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 flex flex-col w-full max-w-[100vw] h-full overflow-hidden relative">
         {/* Top Filter Bar - Fixed within Flex Column */}
-        <header className="bg-background p-4 border-b border-primary-light flex flex-col gap-4 z-30 shadow-sm flex-shrink-0 transition-colors duration-500">
+        <header className="bg-background p-4 border-b border-primary-light flex flex-col gap-3 z-30 shadow-sm flex-shrink-0 transition-colors duration-500">
             {/* Mobile Work Selector */}
             <div className="md:hidden flex items-center gap-4 overflow-x-auto pb-2 no-scrollbar border-b border-primary-light/50">
                  <button onClick={() => setIsAddWorkOpen(true)} className="flex-shrink-0 p-2 bg-primary-light text-primary-dark rounded-full shadow-sm cursor-pointer">
@@ -405,46 +481,89 @@ export const GoodsList: React.FC = () => {
             </div>
 
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-             {/* Categories (Tabs) */}
+             {/* Categories (Tabs) & Title */}
              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full md:max-w-xl pb-1">
-                {selectedWorkId && currentWork ? (
-                  <>
-                    <button 
-                        onClick={openManager}
-                        className="flex-shrink-0 p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full mr-2 transition-colors cursor-pointer"
-                        title="管理作品與分類"
-                    >
-                        <Settings size={18} className="pointer-events-none" />
-                    </button>
+                 {/* Title (Only when no work selected, or on Mobile where work is selected above) */}
+                 {!selectedWorkId && (
+                     <div className="flex-shrink-0 text-lg font-black text-gray-800 tracking-tight flex items-center gap-2 mr-2">
+                        <Sparkle size={20} className="text-primary-dark" /> 周邊一覽
+                     </div>
+                 )}
+
+                 {/* Settings & Add Buttons (Only when Work is Selected) */}
+                 {selectedWorkId && currentWork && (
+                     <button 
+                         onClick={openManager}
+                         className="flex-shrink-0 p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full mr-2 transition-colors cursor-pointer"
+                         title="管理作品與分類"
+                     >
+                         <Settings size={18} className="pointer-events-none" />
+                     </button>
+                 )}
+
+                {/* Categories Tabs */}
+                <button
+                    onClick={() => setSelectedCategoryId(null)}
+                    className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition ${
+                        !selectedCategoryId 
+                            ? 'bg-primary text-gray-900 border-primary shadow-md shadow-primary/20' 
+                            : 'bg-white text-gray-600 border-primary-light hover:border-primary/50'
+                    }`}
+                >
+                    全部分類
+                </button>
+                {visibleCategories.map(cat => (
                     <button
-                        onClick={() => setSelectedCategoryId(null)}
-                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition ${!selectedCategoryId ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-primary-light hover:border-gray-300'}`}
+                        key={cat.id}
+                        onClick={() => setSelectedCategoryId(cat.id)}
+                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedCategoryId === cat.id ? 'bg-primary text-gray-900 border-primary shadow-md shadow-primary/20' : 'bg-white text-gray-600 border-primary-light hover:border-primary/50'}`}
                     >
-                        全部
+                        {cat.name}
                     </button>
-                    {currentWork.categories.map(cat => (
-                        <button
-                            key={cat.id}
-                            onClick={() => setSelectedCategoryId(cat.id)}
-                            className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedCategoryId === cat.id ? 'bg-primary text-gray-900 border-primary' : 'bg-white text-gray-600 border-primary-light hover:border-primary/50'}`}
-                        >
-                            {cat.name}
-                        </button>
-                    ))}
+                ))}
+                
+                {selectedWorkId && (
                     <button onClick={openManager} className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs text-gray-400 border-2 border-dashed border-gray-300 hover:bg-primary-light hover:border-primary hover:text-primary-dark flex items-center gap-1 font-bold cursor-pointer">
                         <Plus size={14} className="pointer-events-none" /> 編輯
                     </button>
-                  </>
-                ) : (
-                    <div className="flex items-center gap-2">
-                         <div className="text-lg font-black text-gray-800 tracking-tight flex items-center gap-2">
-                            <Sparkle size={20} className="text-primary-dark" /> 周邊一覽
-                         </div>
-                    </div>
                 )}
              </div>
 
-             <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 md:ml-auto">
+             {/* Mobile Search Bar (Moved Here - After Categories) */}
+             <div className="md:hidden w-full relative">
+                <input 
+                    type="text" 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="搜尋名稱..."
+                    className="w-full pl-9 pr-4 py-2 bg-white border-2 border-primary-light rounded-full text-sm focus:outline-none focus:border-primary text-gray-800 shadow-sm"
+                />
+                <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
+                {searchQuery && (
+                    <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                        <X size={14} />
+                    </button>
+                )}
+            </div>
+
+             <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 md:ml-auto w-full md:w-auto">
+                {/* Desktop Search Bar */}
+                <div className="hidden md:block relative w-48 lg:w-64 transition-all focus-within:w-64">
+                    <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="搜尋名稱..."
+                        className="w-full pl-9 pr-4 py-2 bg-white border-2 border-primary-light rounded-full text-sm focus:outline-none focus:border-primary text-gray-800 shadow-sm"
+                    />
+                    <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
+                    {searchQuery && (
+                        <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                            <X size={14} />
+                        </button>
+                    )}
+                </div>
+
                 {/* Mobile Stats Button (View Detailed Breakdown) */}
                 <button 
                     onClick={() => setIsStatsOpen(true)}
@@ -540,13 +659,19 @@ export const GoodsList: React.FC = () => {
                                 </span>
                             </div>
 
-                            {/* Hover Edit Overlay - Visible on Desktop Hover */}
+                            {/* Hover Edit/Delete Overlay - Visible on Desktop Hover */}
                             <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[1px] opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-col md:flex-row items-center justify-center gap-1 md:gap-3 z-20 pointer-events-none md:pointer-events-auto">
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); openForm(item); }}
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); openForm(item); }} 
                                     className="bg-white text-gray-700 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
                                 >
                                     <Edit2 size={14} className="pointer-events-none"/>
+                                </button>
+                                <button 
+                                    onClick={(e) => handleDeleteItem(item.id, e)} 
+                                    className="bg-white text-red-400 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
+                                >
+                                    <Trash2 size={14} className="pointer-events-none"/>
                                 </button>
                             </div>
                         </div>
@@ -566,15 +691,11 @@ export const GoodsList: React.FC = () => {
                                 </div>
                                 <div className="text-left md:text-right space-y-0.5 md:space-y-1">
                                     {item.paymentStatus === PaymentStatus.PAID_DEPOSIT && (
-                                        <span className="text-[9px] md:text-xs px-1 md:px-2 py-0.5 rounded-md bg-yellow-50 text-yellow-600 border border-yellow-100 block w-fit md:ml-auto font-medium truncate max-w-full scale-90 md:scale-100 origin-left">
+                                        <span className="text-[9px] md:text-xs px-1 md:px-2 py-0.5 rounded-md bg-primary/10 text-primary-dark border border-primary/20 block w-fit md:ml-auto font-medium truncate max-w-full scale-90 md:scale-100 origin-left">
                                             訂金 ${item.depositAmount}
                                         </span>
                                     )}
-                                    <span className={`text-[9px] md:text-xs px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-md border block w-fit md:ml-auto font-bold truncate max-w-full scale-90 md:scale-100 origin-left ${
-                                        item.paymentStatus === PaymentStatus.PAID_FULL ? 'bg-secondary/10 text-secondary-dark border-secondary/20' :
-                                        item.paymentStatus === PaymentStatus.FORGOTTEN ? 'bg-purple-50 text-purple-500 border-purple-100' :
-                                        item.paymentStatus === PaymentStatus.COD ? 'bg-gray-100 text-gray-500 border-gray-200' : 'bg-orange-50 text-orange-400 border-orange-100'
-                                    }`}>
+                                    <span className={`text-[9px] md:text-xs px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-md border block w-fit md:ml-auto font-bold truncate max-w-full scale-90 md:scale-100 origin-left ${getPaymentStatusColor(item.paymentStatus)}`}>
                                         {item.paymentStatus}
                                     </span>
                                 </div>
@@ -611,7 +732,7 @@ export const GoodsList: React.FC = () => {
         </div>
       </main>
 
-      {/* --- Modals --- */}
+      {/* --- Modals (Unchanged) --- */}
       
       {/* 1. Add Work Modal */}
       {isAddWorkOpen && (
@@ -772,7 +893,7 @@ export const GoodsList: React.FC = () => {
                              <TrendingUp size={24} className="text-secondary-dark" />
                              資產統計
                           </h3>
-                          <p className="text-xs text-gray-500 font-bold mt-1">目前所有收藏的總價值統計</p>
+                          <p className="text-xs text-gray-500 font-bold mt-1">目前所有收藏的總價值與待補款</p>
                       </div>
                       <button onClick={() => setIsStatsOpen(false)} className="w-8 h-8 rounded-full bg-white text-gray-400 hover:bg-gray-100 flex items-center justify-center transition-colors shadow-sm cursor-pointer">
                           <X size={20} />
@@ -781,10 +902,23 @@ export const GoodsList: React.FC = () => {
                   
                   <div className="overflow-y-auto custom-scrollbar flex-1 bg-white p-6">
                       {/* Grand Total Card */}
-                      <div className="bg-gradient-to-br from-secondary to-secondary-dark rounded-3xl p-6 text-white shadow-lg shadow-secondary/20 mb-8 relative overflow-hidden">
+                      <div className="bg-gradient-to-br from-secondary to-secondary-dark rounded-3xl p-6 text-white shadow-lg shadow-secondary/20 mb-4 relative overflow-hidden">
                           <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
                           <p className="text-white font-bold mb-1 opacity-80">總資產估值 (Grand Total)</p>
                           <h2 className="text-4xl font-black tracking-tight">${statistics.grandTotal.toLocaleString()}</h2>
+                      </div>
+
+                      {/* Unpaid Amount Card */}
+                      <div className="bg-secondary/5 border-2 border-secondary/20 rounded-3xl p-5 mb-8 flex items-center justify-between">
+                         <div>
+                            <p className="text-secondary-dark font-bold text-sm mb-1 flex items-center gap-1">
+                                <CircleDollarSign size={16} /> 預估待補款 (Unpaid)
+                            </p>
+                            <h3 className="text-2xl font-black text-secondary-dark">${statistics.unpaidTotal.toLocaleString()}</h3>
+                         </div>
+                         <div className="w-10 h-10 bg-secondary/20 rounded-full flex items-center justify-center text-secondary-dark">
+                            <Calculator size={20} />
+                         </div>
                       </div>
 
                       <h4 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
