@@ -35,12 +35,14 @@ export interface ProxyService {
 export interface Category {
   id: string;
   name: string;
+  order?: number;
 }
 
 export interface Work {
   id: string;
   name: string;
   categories: Category[];
+  order?: number;
 }
 
 export interface GoodsItem {
@@ -48,25 +50,26 @@ export interface GoodsItem {
   workId: string;
   categoryId: string;
   name: string;
-  originalName?: string; 
+  originalName?: string;
   condition?: ConditionStatus; // New field
   price: number;
   quantity: number;
   image: string; // Base64
-  
+
   // Source
   sourceType: SourceType;
   proxyId?: string; // If SourceType.PROXY
   purchaseLocation?: string; // If SourceType.SELF
-  
+
   // Status
   status: ItemStatus;
-  
+
   // Payment
   paymentStatus: PaymentStatus;
   depositAmount?: number; // If PaymentStatus.PAID_DEPOSIT
-  
+
   createdAt: number;
+  order?: number;
 }
 
 export interface GallerySpec {
@@ -83,9 +86,11 @@ export interface GalleryItem {
   image: string; // Base64
   specs: GallerySpec[];
   createdAt: number;
+  order?: number;
 }
 
-export type SortOption = 
+export type SortOption =
+  | 'default'
   | 'created_desc' | 'created_asc'
   | 'price_desc' | 'price_asc'
   | 'total_desc' | 'total_asc'

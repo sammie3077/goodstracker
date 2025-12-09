@@ -133,6 +133,9 @@ export const StorageService = {
   deleteItem: async (id: string) => {
     await DB.delete(STORES.ITEMS, id);
   },
+  bulkUpdateItems: async (items: GoodsItem[]) => {
+    await DB.bulkPut(STORES.ITEMS, items);
+  },
 
   // --- Gallery Items ---
   getGalleryItems: async (): Promise<GalleryItem[]> => {
@@ -146,6 +149,9 @@ export const StorageService = {
   },
   deleteGalleryItem: async (id: string) => {
     await DB.delete(STORES.GALLERY, id);
+  },
+  bulkUpdateGalleryItems: async (items: GalleryItem[]) => {
+    await DB.bulkPut(STORES.GALLERY, items);
   },
 
   // --- Works & Categories ---
@@ -221,6 +227,9 @@ export const StorageService = {
     for (const item of itemsToDelete) {
       await DB.delete(STORES.ITEMS, item.id);
     }
+  },
+  bulkUpdateWorks: async (works: Work[]) => {
+    await DB.bulkPut(STORES.WORKS, works);
   },
 
   // --- Proxies ---

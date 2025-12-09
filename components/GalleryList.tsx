@@ -1,21 +1,24 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
+import { DB, STORES } from '../services/db';
 import { GalleryItem, Work, GallerySpec } from '../types';
-import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Library, Sparkle, Loader2, Search } from 'lucide-react';
+import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Library, Sparkle, Loader2, Search, GripVertical, ArrowUpDown } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
+import { useLongPressDrag } from '../hooks/useLongPressDrag';
 
 export const GalleryList: React.FC = () => {
   // Data State
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [works, setWorks] = useState<Work[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
+
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GalleryItem | null>(null);
+  const [sortBy, setSortBy] = useState<'default' | 'created_desc' | 'created_asc'>('default');
   
   // Confirm Dialog State
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -68,17 +71,76 @@ export const GalleryList: React.FC = () => {
     // 2. Filter by Search Query
     if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        result = result.filter(i => 
-            i.name.toLowerCase().includes(query) || 
+        result = result.filter(i =>
+            i.name.toLowerCase().includes(query) ||
             (i.originalName && i.originalName.toLowerCase().includes(query))
         );
     }
 
-    // Sort by newest first
-    return result.sort((a, b) => b.createdAt - a.createdAt);
-  }, [items, selectedWorkId, searchQuery]);
+    // Sort
+    return result.sort((a, b) => {
+      switch (sortBy) {
+        case 'default': {
+          // Use manual order if available, otherwise fall back to created date
+          const orderA = a.order ?? Infinity;
+          const orderB = b.order ?? Infinity;
+          if (orderA !== orderB && orderA !== Infinity && orderB !== Infinity) {
+            return orderA - orderB;
+          }
+          return b.createdAt - a.createdAt;
+        }
+        case 'created_asc': return a.createdAt - b.createdAt;
+        case 'created_desc': return b.createdAt - a.createdAt;
+        default: return b.createdAt - a.createdAt;
+      }
+    });
+  }, [items, selectedWorkId, searchQuery, sortBy]);
 
   const currentWork = works.find(w => w.id === selectedWorkId);
+
+  // Sort works by order
+  const sortedWorks = useMemo(() => {
+    return [...works].sort((a, b) => {
+      const orderA = a.order ?? Infinity;
+      const orderB = b.order ?? Infinity;
+      if (orderA === orderB) return a.name.localeCompare(b.name);
+      return orderA - orderB;
+    });
+  }, [works]);
+
+  // Handle work reorder
+  const handleWorkReorder = async (reorderedWorks: Work[]) => {
+    const worksWithOrder = reorderedWorks.map((work, index) => ({
+      ...work,
+      order: index,
+    }));
+    await StorageService.bulkUpdateWorks(worksWithOrder);
+    refreshData();
+  };
+
+  // Drag handlers for works
+  const worksDrag = useLongPressDrag({
+    items: sortedWorks,
+    onReorder: handleWorkReorder,
+  });
+
+  // Handle gallery items reorder
+  const handleGalleryReorder = async (reorderedItems: GalleryItem[]) => {
+    const itemsWithOrder = reorderedItems.map((item, index) => ({
+      ...item,
+      order: index,
+    }));
+    await StorageService.bulkUpdateGalleryItems(itemsWithOrder);
+    refreshData();
+  };
+
+  // Drag handlers for gallery items
+  const galleryDrag = useLongPressDrag({
+    items: filteredItems,
+    onReorder: handleGalleryReorder,
+    // Only enable drag in default sorting mode
+    disabled: sortBy !== 'default',
+  });
 
   // --- Handlers ---
 
@@ -265,13 +327,32 @@ export const GalleryList: React.FC = () => {
           >
             全部作品
           </button>
-          {works.map(work => (
-            <div key={work.id} className="relative group">
+          {sortedWorks.map(work => (
+            <div
+              key={work.id}
+              className="relative group"
+              data-draggable-id={work.id}
+              draggable
+              {...worksDrag.handlers}
+              onDragStart={(e) => worksDrag.handlers.onDragStart(e, work.id)}
+              onDragOver={(e) => worksDrag.handlers.onDragOver(e, work.id)}
+              onDrop={(e) => worksDrag.handlers.onDrop(e, work.id)}
+              onTouchStart={(e) => worksDrag.handlers.onTouchStart(e, work.id)}
+            >
                 <button
                   onClick={() => { setSelectedWorkId(work.id); }}
-                  className={`w-full text-left px-5 py-3 text-sm transition font-bold truncate border-l-4 hover:bg-primary-light/50 ${selectedWorkId === work.id ? 'border-primary bg-primary-light/50 text-gray-900' : 'border-transparent text-gray-500'}`}
+                  className={`w-full text-left px-5 py-3 text-sm transition font-bold truncate border-l-4 hover:bg-primary-light/50 flex items-center gap-2 ${
+                    worksDrag.draggedId === work.id
+                      ? 'opacity-50 bg-gray-100'
+                      : worksDrag.dragOverId === work.id
+                        ? 'border-secondary bg-secondary/10'
+                        : selectedWorkId === work.id
+                          ? 'border-primary bg-primary-light/50 text-gray-900'
+                          : 'border-transparent text-gray-500'
+                  }`}
                 >
-                  {work.name}
+                  <GripVertical size={16} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                  <span className="truncate">{work.name}</span>
                 </button>
             </div>
           ))}
@@ -287,13 +368,13 @@ export const GalleryList: React.FC = () => {
                  <button onClick={() => setIsAddWorkOpen(true)} className="flex-shrink-0 p-2 bg-primary-light text-primary-dark rounded-full shadow-sm cursor-pointer">
                     <Plus size={16} className="pointer-events-none" />
                  </button>
-                 <button 
+                 <button
                     onClick={() => { setSelectedWorkId(null); }}
                     className={`whitespace-nowrap px-2 py-2 text-sm font-bold transition border-b-2 ${!selectedWorkId ? 'border-primary text-gray-900' : 'border-transparent text-gray-500'}`}
                  >
                     全部作品
                  </button>
-                 {works.map(w => (
+                 {sortedWorks.map(w => (
                      <button
                         key={w.id}
                         onClick={() => { setSelectedWorkId(w.id); }}
@@ -342,13 +423,27 @@ export const GalleryList: React.FC = () => {
                         </button>
                     )}
                 </div>
-                
+
                 <div className="ml-2 flex items-center gap-2">
-                    <button 
-                        onClick={() => openForm()} 
+                    {/* Sort Dropdown */}
+                    <div className="relative group shrink-0">
+                        <select
+                            value={sortBy}
+                            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                            className="appearance-none bg-white border-2 border-primary-light text-xs md:text-sm rounded-full pl-8 pr-6 py-2 focus:outline-none focus:border-primary text-gray-700 cursor-pointer shadow-sm hover:border-primary/50 transition-colors font-medium"
+                        >
+                            <option value="default">預設排序</option>
+                            <option value="created_desc">最新</option>
+                            <option value="created_asc">最舊</option>
+                        </select>
+                        <ArrowUpDown className="absolute left-2.5 top-2.5 text-gray-400 w-3.5 h-3.5 pointer-events-none" />
+                    </div>
+
+                    <button
+                        onClick={() => openForm()}
                         className="bg-primary hover:bg-primary-dark text-gray-900 px-4 py-2 rounded-full flex items-center gap-2 text-sm shadow-md shadow-primary/30 transition-all hover:-translate-y-0.5 cursor-pointer"
                     >
-                        <Plus size={18} strokeWidth={3} className="pointer-events-none" /> 
+                        <Plus size={18} strokeWidth={3} className="pointer-events-none" />
                         <span className="hidden sm:inline font-bold pointer-events-none">新增圖鑑</span>
                         <span className="sm:hidden font-bold pointer-events-none">新增</span>
                     </button>
@@ -364,12 +459,25 @@ export const GalleryList: React.FC = () => {
                     const totalSpecs = item.specs?.length || 0;
                     const ownedSpecs = item.specs?.filter(s => s.isOwned).length || 0;
                     const percent = totalSpecs > 0 ? Math.round((ownedSpecs / totalSpecs) * 100) : 0;
-                    
+
                     return (
-                        <div 
-                            key={item.id} 
+                        <div
+                            key={item.id}
+                            data-draggable-id={item.id}
+                            draggable={sortBy === 'default'}
                             onClick={() => openForm(item)}
-                            className="bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative"
+                            className={`bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative ${
+                              galleryDrag.draggedId === item.id
+                                ? 'opacity-50 scale-95'
+                                : galleryDrag.dragOverId === item.id
+                                  ? 'ring-2 ring-secondary scale-105'
+                                  : ''
+                            }`}
+                            {...(sortBy === 'default' ? galleryDrag.handlers : {})}
+                            onDragStart={(e) => sortBy === 'default' && galleryDrag.handlers.onDragStart(e, item.id)}
+                            onDragOver={(e) => sortBy === 'default' && galleryDrag.handlers.onDragOver(e, item.id)}
+                            onDrop={(e) => sortBy === 'default' && galleryDrag.handlers.onDrop(e, item.id)}
+                            onTouchStart={(e) => sortBy === 'default' && galleryDrag.handlers.onTouchStart(e, item.id)}
                         >
                             <div className="relative aspect-square bg-gray-50 overflow-hidden m-1 md:m-2 rounded-lg md:rounded-2xl">
                                 {item.image ? (
@@ -622,7 +730,7 @@ export const GalleryList: React.FC = () => {
                             {formSpecs.length === 0 ? (
                                 <div className="text-center text-gray-400 py-8 text-sm font-medium">
                                     尚未建立規格<br/>
-                                    請使用上方按鈕新增 (例如: 批量新增 {'>'} 10)
+                                    請使用上方按鈕新增 (例如: 批量新增 &gt; 10)
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">

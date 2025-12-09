@@ -1,9 +1,11 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
+import { DB, STORES } from '../services/db';
 import { GoodsItem, Work, Category, ItemStatus, PaymentStatus, SourceType, SortOption, ProxyService, ConditionStatus } from '../types';
-import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkle, Library, Loader2, CircleDollarSign } from 'lucide-react';
+import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkle, Library, Loader2, CircleDollarSign, GripVertical } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
+import { useLongPressDrag } from '../hooks/useLongPressDrag';
 
 export const GoodsList: React.FC = () => {
   // Data State
@@ -29,7 +31,7 @@ export const GoodsList: React.FC = () => {
   } | null>(null);
   
   // Filters & Sort
-  const [sortBy, setSortBy] = useState<SortOption>('created_desc');
+  const [sortBy, setSortBy] = useState<SortOption>('default');
   const [filterStatus, setFilterStatus] = useState<ItemStatus | 'ALL'>('ALL');
 
   // Modals
@@ -120,8 +122,8 @@ export const GoodsList: React.FC = () => {
     // 4. Search Query (Name or Original Name)
     if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        result = result.filter(i => 
-            i.name.toLowerCase().includes(query) || 
+        result = result.filter(i =>
+            i.name.toLowerCase().includes(query) ||
             (i.originalName && i.originalName.toLowerCase().includes(query))
         );
     }
@@ -129,6 +131,15 @@ export const GoodsList: React.FC = () => {
     // 5. Sort
     return result.sort((a, b) => {
       switch (sortBy) {
+        case 'default': {
+          // Use manual order if available, otherwise fall back to created date
+          const orderA = a.order ?? Infinity;
+          const orderB = b.order ?? Infinity;
+          if (orderA !== orderB && orderA !== Infinity && orderB !== Infinity) {
+            return orderA - orderB;
+          }
+          return b.createdAt - a.createdAt;
+        }
         case 'price_desc': return b.price - a.price;
         case 'price_asc': return a.price - b.price;
         case 'quantity_desc': return b.quantity - a.quantity;
@@ -136,7 +147,8 @@ export const GoodsList: React.FC = () => {
         case 'total_desc': return (b.price * b.quantity) - (a.price * a.quantity);
         case 'total_asc': return (a.price * a.quantity) - (b.price * b.quantity);
         case 'created_asc': return a.createdAt - b.createdAt;
-        case 'created_desc': default: return b.createdAt - a.createdAt;
+        case 'created_desc': return b.createdAt - a.createdAt;
+        default: return b.createdAt - a.createdAt;
       }
     });
   }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus, searchQuery, works]);
@@ -188,6 +200,83 @@ export const GoodsList: React.FC = () => {
   }, [items, works]);
 
   const currentWork = works.find(w => w.id === selectedWorkId);
+
+  // Sort works by order
+  const sortedWorks = useMemo(() => {
+    return [...works].sort((a, b) => {
+      const orderA = a.order ?? Infinity;
+      const orderB = b.order ?? Infinity;
+      if (orderA === orderB) return a.name.localeCompare(b.name);
+      return orderA - orderB;
+    });
+  }, [works]);
+
+  // Handle work reorder
+  const handleWorkReorder = async (reorderedWorks: Work[]) => {
+    const worksWithOrder = reorderedWorks.map((work, index) => ({
+      ...work,
+      order: index,
+    }));
+    await StorageService.bulkUpdateWorks(worksWithOrder);
+    refreshData();
+  };
+
+  // Drag handlers for works
+  const worksDrag = useLongPressDrag({
+    items: sortedWorks,
+    onReorder: handleWorkReorder,
+  });
+
+  // Sort categories by order
+  const sortedCategories = useMemo(() => {
+    if (!currentWork) return [];
+    return [...currentWork.categories].sort((a, b) => {
+      const orderA = a.order ?? Infinity;
+      const orderB = b.order ?? Infinity;
+      if (orderA === orderB) return a.name.localeCompare(b.name);
+      return orderA - orderB;
+    });
+  }, [currentWork]);
+
+  // Handle category reorder
+  const handleCategoryReorder = async (reorderedCategories: Category[]) => {
+    if (!selectedWorkId || !currentWork) return;
+    const categoriesWithOrder = reorderedCategories.map((cat, index) => ({
+      ...cat,
+      order: index,
+    }));
+    const updatedWork = {
+      ...currentWork,
+      categories: categoriesWithOrder,
+    };
+    await StorageService.updateWork(selectedWorkId, updatedWork.name);
+    await DB.put(STORES.WORKS, updatedWork);
+    refreshData();
+  };
+
+  // Drag handlers for categories
+  const categoriesDrag = useLongPressDrag({
+    items: sortedCategories,
+    onReorder: handleCategoryReorder,
+  });
+
+  // Handle goods items reorder
+  const handleGoodsReorder = async (reorderedItems: GoodsItem[]) => {
+    const itemsWithOrder = reorderedItems.map((item, index) => ({
+      ...item,
+      order: index,
+    }));
+    await StorageService.bulkUpdateItems(itemsWithOrder);
+    refreshData();
+  };
+
+  // Drag handlers for goods items
+  const goodsDrag = useLongPressDrag({
+    items: filteredItems,
+    onReorder: handleGoodsReorder,
+    // Only enable drag in default sorting mode
+    disabled: sortBy !== 'default',
+  });
 
   // --- Handlers ---
 
@@ -422,13 +511,32 @@ export const GoodsList: React.FC = () => {
           >
             全部作品
           </button>
-          {works.map(work => (
-            <div key={work.id} className="relative group">
+          {sortedWorks.map(work => (
+            <div
+              key={work.id}
+              className="relative group"
+              data-draggable-id={work.id}
+              draggable
+              {...worksDrag.handlers}
+              onDragStart={(e) => worksDrag.handlers.onDragStart(e, work.id)}
+              onDragOver={(e) => worksDrag.handlers.onDragOver(e, work.id)}
+              onDrop={(e) => worksDrag.handlers.onDrop(e, work.id)}
+              onTouchStart={(e) => worksDrag.handlers.onTouchStart(e, work.id)}
+            >
                 <button
                   onClick={() => { setSelectedWorkId(work.id); setSelectedCategoryId(null); }}
-                  className={`w-full text-left px-5 py-3 text-sm transition font-bold truncate border-l-4 hover:bg-primary-light/50 ${selectedWorkId === work.id ? 'border-primary bg-primary-light/50 text-gray-900' : 'border-transparent text-gray-500'}`}
+                  className={`w-full text-left px-5 py-3 text-sm transition font-bold truncate border-l-4 hover:bg-primary-light/50 flex items-center gap-2 ${
+                    worksDrag.draggedId === work.id
+                      ? 'opacity-50 bg-gray-100'
+                      : worksDrag.dragOverId === work.id
+                        ? 'border-secondary bg-secondary/10'
+                        : selectedWorkId === work.id
+                          ? 'border-primary bg-primary-light/50 text-gray-900'
+                          : 'border-transparent text-gray-500'
+                  }`}
                 >
-                  {work.name}
+                  <GripVertical size={16} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                  <span className="truncate">{work.name}</span>
                 </button>
             </div>
           ))}
@@ -463,13 +571,13 @@ export const GoodsList: React.FC = () => {
                  <button onClick={() => setIsAddWorkOpen(true)} className="flex-shrink-0 p-2 bg-primary-light text-primary-dark rounded-full shadow-sm cursor-pointer">
                     <Plus size={16} className="pointer-events-none" />
                  </button>
-                 <button 
+                 <button
                     onClick={() => { setSelectedWorkId(null); setSelectedCategoryId(null); }}
                     className={`whitespace-nowrap px-2 py-2 text-sm font-bold transition border-b-2 ${!selectedWorkId ? 'border-primary text-gray-900' : 'border-transparent text-gray-500'}`}
                  >
                     全部作品
                  </button>
-                 {works.map(w => (
+                 {sortedWorks.map(w => (
                      <button
                         key={w.id}
                         onClick={() => { setSelectedWorkId(w.id); setSelectedCategoryId(null); }}
@@ -590,6 +698,7 @@ export const GoodsList: React.FC = () => {
                         onChange={(e) => setSortBy(e.target.value as SortOption)}
                         className="appearance-none bg-white border-2 border-primary-light text-xs md:text-sm rounded-full pl-8 pr-6 py-2 focus:outline-none focus:border-primary text-gray-700 cursor-pointer shadow-sm hover:border-primary/50 transition-colors font-medium"
                     >
+                        <option value="default">預設排序</option>
                         <option value="created_desc">最新</option>
                         <option value="created_asc">最舊</option>
                         <option value="price_desc">單價高</option>
@@ -630,10 +739,23 @@ export const GoodsList: React.FC = () => {
             {/* 3 Columns on Mobile (grid-cols-3) */}
             <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-5">
                 {filteredItems.map(item => (
-                    <div 
-                        key={item.id} 
+                    <div
+                        key={item.id}
+                        data-draggable-id={item.id}
+                        draggable={sortBy === 'default'}
                         onClick={() => openForm(item)}
-                        className="bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative"
+                        className={`bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative ${
+                          goodsDrag.draggedId === item.id
+                            ? 'opacity-50 scale-95'
+                            : goodsDrag.dragOverId === item.id
+                              ? 'ring-2 ring-secondary scale-105'
+                              : ''
+                        }`}
+                        {...(sortBy === 'default' ? goodsDrag.handlers : {})}
+                        onDragStart={(e) => sortBy === 'default' && goodsDrag.handlers.onDragStart(e, item.id)}
+                        onDragOver={(e) => sortBy === 'default' && goodsDrag.handlers.onDragOver(e, item.id)}
+                        onDrop={(e) => sortBy === 'default' && goodsDrag.handlers.onDrop(e, item.id)}
+                        onTouchStart={(e) => sortBy === 'default' && goodsDrag.handlers.onTouchStart(e, item.id)}
                     >
                         <div className="relative aspect-square bg-gray-50 overflow-hidden m-1 md:m-2 rounded-lg md:rounded-2xl">
                             {item.image ? (
@@ -801,13 +923,30 @@ export const GoodsList: React.FC = () => {
                               </div>
 
                               <div className="space-y-2">
-                                  {currentWork.categories.map(cat => (
-                                      <div key={cat.id} className="flex items-center gap-2 p-3 bg-white border border-gray-100 rounded-xl hover:border-primary-light transition-colors group">
+                                  {sortedCategories.map(cat => (
+                                      <div
+                                        key={cat.id}
+                                        className={`flex items-center gap-2 p-3 bg-white border border-gray-100 rounded-xl hover:border-primary-light transition-colors group ${
+                                          categoriesDrag.draggedId === cat.id
+                                            ? 'opacity-50 bg-gray-100'
+                                            : categoriesDrag.dragOverId === cat.id
+                                              ? 'border-secondary bg-secondary/10'
+                                              : ''
+                                        }`}
+                                        data-draggable-id={cat.id}
+                                        draggable
+                                        {...categoriesDrag.handlers}
+                                        onDragStart={(e) => categoriesDrag.handlers.onDragStart(e, cat.id)}
+                                        onDragOver={(e) => categoriesDrag.handlers.onDragOver(e, cat.id)}
+                                        onDrop={(e) => categoriesDrag.handlers.onDrop(e, cat.id)}
+                                        onTouchStart={(e) => categoriesDrag.handlers.onTouchStart(e, cat.id)}
+                                      >
+                                          <GripVertical size={16} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                                           {editingCatId === cat.id ? (
                                               <div className="flex-1 flex gap-2">
-                                                  <input 
+                                                  <input
                                                     autoFocus
-                                                    type="text" 
+                                                    type="text"
                                                     value={editingCatName}
                                                     onChange={e => setEditingCatName(e.target.value)}
                                                     className="flex-1 border-b-2 border-primary focus:outline-none font-bold text-gray-900 bg-transparent px-1"
@@ -823,13 +962,13 @@ export const GoodsList: React.FC = () => {
                                               <>
                                                   <span className="flex-1 font-bold text-gray-600 px-1">{cat.name}</span>
                                                   <div className="flex gap-1">
-                                                      <button 
+                                                      <button
                                                         onClick={() => { setEditingCatId(cat.id); setEditingCatName(cat.name); }}
                                                         className="p-2 text-gray-400 hover:text-primary-dark hover:bg-primary-light rounded-lg transition-colors cursor-pointer"
                                                       >
                                                           <Edit2 size={16} className="pointer-events-none" />
                                                       </button>
-                                                      <button 
+                                                      <button
                                                         onClick={() => handleDeleteCategory(cat.id, cat.name)}
                                                         className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                                       >
@@ -840,7 +979,7 @@ export const GoodsList: React.FC = () => {
                                           )}
                                       </div>
                                   ))}
-                                  {currentWork.categories.length === 0 && (
+                                  {sortedCategories.length === 0 && (
                                       <p className="text-center text-gray-400 text-sm py-4">目前沒有分類</p>
                                   )}
                               </div>

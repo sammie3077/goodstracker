@@ -80,9 +80,9 @@ const THEMES: Record<ThemeId, { name: string; colors: ThemeColors }> = {
     colors: {
       primary: '#e7c6c5',      // Coral Pink
       primaryLight: '#fcf6f6', // Very light rose
-      primaryDark: '#d9a5a4',  // Deep Coral
+      primaryDark: '#ca8988ff',  // Deep Coral
       secondary: '#ead7dd',    // Dusty Rose
-      secondaryDark: '#bda8af',
+      secondaryDark: '#bea2acff',
       background: '#fffefe',   // Lighter Warm White (Almost pure white with tiny pink tint)
     },
   },
@@ -90,11 +90,11 @@ const THEMES: Record<ThemeId, { name: string; colors: ThemeColors }> = {
     name: '湖畔青藍',
     colors: {
       primary: '#69b2b2',      // Muted Teal (User provided)
-      primaryLight: '#edf7f7', // Very light teal
+      primaryLight: '#bfececff', // Very light teal
       primaryDark: '#054269',  // Deep Blue (User provided)
-      secondary: '#eec643',    // Ginkgo Gold (Accent)
-      secondaryDark: '#b59321', // Darker Gold
-      background: '#fcfdfd',   // Cool White
+      secondary: '#f2e3b1ff',    // Ginkgo Gold (Accent)
+      secondaryDark: '#e5ca71ff', // Darker Gold
+      background: '#eefafaff',   // Cool White
     },
   },
 };
