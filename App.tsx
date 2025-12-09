@@ -89,8 +89,8 @@ const THEMES: Record<ThemeId, { name: string; colors: ThemeColors }> = {
   teal: {
     name: '湖畔青藍',
     colors: {
-      primary: '#8dcbcbff',      // Muted Teal (User provided)
-      primaryLight: '#e1f9f9ff', // Very light teal
+      primary: '#4a9090ff',      // Muted Teal (User provided)
+      primaryLight: '#ecf9f9ff', // Very light teal
       primaryDark: '#205d83ff',  // Deep Blue (User provided)
       secondary: '#f2e3b1ff',    // Ginkgo Gold (Accent)
       secondaryDark: '#f8e9baff', // Darker Gold
