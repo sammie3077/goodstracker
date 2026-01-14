@@ -5,6 +5,7 @@ import { ProxyManager } from './components/ProxyManager';
 import { GalleryList } from './components/GalleryList';
 import { StorageService } from './services/storageService';
 import { LayoutGrid, Users, Palette, Check, X, Settings, Download, Upload, AlertTriangle, BookOpen, Loader2, Clock } from 'lucide-react';
+import { Toaster, toast } from 'sonner';
 
 // --- Theme Definitions ---
 
@@ -207,9 +208,10 @@ const App: React.FC = () => {
         const now = new Date().toISOString();
         localStorage.setItem('last_backup_date', now);
         setLastBackupDate(now);
+        toast.success('備份檔案已下載成功');
     } catch (e) {
         console.error(e);
-        alert('匯出失敗，請重試');
+        toast.error('匯出失敗，請重試');
     }
   };
 
@@ -230,14 +232,14 @@ const App: React.FC = () => {
         const json = JSON.parse(e.target?.result as string);
         const success = await StorageService.restoreData(json);
         if (success) {
-          alert('✅ 資料還原成功！網頁將自動重新整理。');
-          window.location.reload();
+          toast.success('資料還原成功！網頁將自動重新整理');
+          setTimeout(() => window.location.reload(), 1000);
         } else {
-          alert('❌ 資料格式錯誤，無法還原。');
+          toast.error('資料格式錯誤，無法還原');
         }
       } catch (error) {
         console.error(error);
-        alert('❌ 讀取檔案失敗。');
+        toast.error('讀取檔案失敗');
       }
     };
     reader.readAsText(file);
@@ -253,7 +255,9 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background text-gray-800 font-sans flex flex-col pb-20 md:pb-0 transition-colors duration-500">
+    <>
+      <Toaster position="top-center" richColors closeButton />
+      <div className="min-h-screen bg-background text-gray-800 font-sans flex flex-col pb-20 md:pb-0 transition-colors duration-500">
       {/* Top Navigation */}
       <nav className="bg-white/80 backdrop-blur-md shadow-sm border-b border-primary-light z-40 sticky top-0 transition-colors duration-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -515,7 +519,8 @@ const App: React.FC = () => {
            </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 

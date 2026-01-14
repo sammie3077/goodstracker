@@ -1,12 +1,13 @@
 
 const DB_NAME = 'GoodsTrackerDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Upgraded for Blob storage
 
 export const STORES = {
   ITEMS: 'items',
   GALLERY: 'gallery',
   WORKS: 'works',
-  PROXIES: 'proxies'
+  PROXIES: 'proxies',
+  IMAGES: 'images' // New store for Blob storage
 };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -19,8 +20,9 @@ const openDB = (): Promise<IDBDatabase> => {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
-      
-      // Create Object Stores if they don't exist
+      const oldVersion = event.oldVersion;
+
+      // Version 1: Create Object Stores if they don't exist
       if (!db.objectStoreNames.contains(STORES.ITEMS)) {
         db.createObjectStore(STORES.ITEMS, { keyPath: 'id' });
       }
@@ -32,6 +34,11 @@ const openDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains(STORES.PROXIES)) {
         db.createObjectStore(STORES.PROXIES, { keyPath: 'id' });
+      }
+
+      // Version 2: Add images store for Blob storage
+      if (oldVersion < 2 && !db.objectStoreNames.contains(STORES.IMAGES)) {
+        db.createObjectStore(STORES.IMAGES, { keyPath: 'id' });
       }
     };
 

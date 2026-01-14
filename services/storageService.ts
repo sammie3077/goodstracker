@@ -1,6 +1,7 @@
 
 import { GoodsItem, ProxyService, Work, GalleryItem } from '../types';
 import { DB, STORES } from './db';
+import { ImageService } from './imageService';
 
 const LEGACY_STORAGE_KEYS = {
   ITEMS: 'goods_tracker_items',
@@ -67,6 +68,51 @@ export const StorageService = {
         if (migratedCount > 0) {
           console.log(`Migrated ${migratedCount} items with OPENED_CHECKED status`);
         }
+      }
+
+      // Migrate base64 images to Blob storage (v2)
+      const imageMigrationKey = 'images_migrated_to_blob_v2';
+      if (!localStorage.getItem(imageMigrationKey)) {
+        console.log('Migrating images from base64 to Blob storage...');
+
+        // Migrate GoodsItems
+        const items = await DB.getAll<GoodsItem>(STORES.ITEMS);
+        let itemsMigratedCount = 0;
+
+        for (const item of items) {
+          if (item.image && !item.imageId) {
+            try {
+              const imageId = await ImageService.migrateBase64ToBlob(item.image);
+              item.imageId = imageId;
+              delete item.image; // Remove old base64 field
+              await DB.put(STORES.ITEMS, item);
+              itemsMigratedCount++;
+            } catch (error) {
+              console.error(`Failed to migrate image for item ${item.id}:`, error);
+            }
+          }
+        }
+
+        // Migrate GalleryItems
+        const galleryItems = await DB.getAll<GalleryItem>(STORES.GALLERY);
+        let galleryMigratedCount = 0;
+
+        for (const item of galleryItems) {
+          if (item.image && !item.imageId) {
+            try {
+              const imageId = await ImageService.migrateBase64ToBlob(item.image);
+              item.imageId = imageId;
+              delete item.image; // Remove old base64 field
+              await DB.put(STORES.GALLERY, item);
+              galleryMigratedCount++;
+            } catch (error) {
+              console.error(`Failed to migrate image for gallery item ${item.id}:`, error);
+            }
+          }
+        }
+
+        localStorage.setItem(imageMigrationKey, 'true');
+        console.log(`Migrated ${itemsMigratedCount} goods items and ${galleryMigratedCount} gallery items to Blob storage`);
       }
 
       return false; // No migration needed

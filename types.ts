@@ -54,7 +54,8 @@ export interface GoodsItem {
   condition?: ConditionStatus; // New field
   price: number;
   quantity: number;
-  image: string; // Base64
+  imageId?: string; // Blob reference ID (v2+)
+  image?: string; // Deprecated: Base64 (kept for migration)
 
   // Source
   sourceType: SourceType;
@@ -83,7 +84,8 @@ export interface GalleryItem {
   workId: string;
   name: string;
   originalName?: string;
-  image: string; // Base64
+  imageId?: string; // Blob reference ID (v2+)
+  image?: string; // Deprecated: Base64 (kept for migration)
   specs: GallerySpec[];
   createdAt: number;
   order?: number;

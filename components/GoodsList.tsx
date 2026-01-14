@@ -3,9 +3,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
 import { DB, STORES } from '../services/db';
 import { GoodsItem, Work, Category, ItemStatus, PaymentStatus, SourceType, SortOption, ProxyService, ConditionStatus } from '../types';
-import { Plus, Search, Filter, ArrowUpDown, Tag, MapPin, DollarSign, Package, Trash2, X, Settings, Edit2, Check, AlertTriangle, Calculator, ChevronDown, ChevronRight, TrendingUp, Sparkle, Library, Loader2, CircleDollarSign, GripVertical } from 'lucide-react';
-import { ImageCropper } from './ImageCropper';
+import { Plus, Search, Filter, ArrowUpDown, Package, X, Settings, Calculator, TrendingUp, Library, Loader2, GripVertical, ChevronRight, Sparkle } from 'lucide-react';
 import { useLongPressDrag } from '../hooks/useLongPressDrag';
+import { useDebounce } from '../hooks/useDebounce';
+import { toast } from 'sonner';
+import { ItemCard } from './GoodsList/ItemCard';
+import { ItemForm } from './GoodsList/ItemForm';
+import { StatsModal } from './GoodsList/StatsModal';
+import { WorkManager } from './GoodsList/WorkManager';
+import { ConfirmDialog } from './GoodsList/ConfirmDialog';
+import { ImageService } from '../services/imageService';
 
 export const GoodsList: React.FC = () => {
   // Data State
@@ -18,6 +25,7 @@ export const GoodsList: React.FC = () => {
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null); // Stores ID (specific work) or Name (all works)
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GoodsItem | null>(null);
   
@@ -120,8 +128,8 @@ export const GoodsList: React.FC = () => {
     }
 
     // 4. Search Query (Name or Original Name)
-    if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
+    if (debouncedSearchQuery.trim()) {
+        const query = debouncedSearchQuery.toLowerCase();
         result = result.filter(i =>
             i.name.toLowerCase().includes(query) ||
             (i.originalName && i.originalName.toLowerCase().includes(query))
@@ -151,7 +159,7 @@ export const GoodsList: React.FC = () => {
         default: return b.createdAt - a.createdAt;
       }
     });
-  }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus, searchQuery, works]);
+  }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus, debouncedSearchQuery, works]);
 
   // Calculate Total Value for Current View
   const currentViewTotal = useMemo(() => {
@@ -305,7 +313,7 @@ export const GoodsList: React.FC = () => {
     if (selectedWorkId && editWorkName.trim()) {
       await StorageService.updateWork(selectedWorkId, editWorkName);
       refreshData();
-      alert('作品名稱已更新');
+      toast.success('作品名稱已更新');
     }
   };
 
@@ -330,8 +338,9 @@ export const GoodsList: React.FC = () => {
                 setSelectedCategoryId(null);
                 setIsManagerOpen(false);
                 refreshData();
+                toast.success('作品已刪除');
             } catch (e) {
-                alert('刪除失敗');
+                toast.error('刪除失敗');
                 console.error(e);
             }
             setConfirmConfig(null);
@@ -374,10 +383,20 @@ export const GoodsList: React.FC = () => {
       });
   };
 
-  const openForm = (item?: GoodsItem) => {
+  const openForm = async (item?: GoodsItem) => {
     if (item) {
       setEditingItem(item);
-      setFormData({ ...item });
+
+      // Load image as base64 for editing
+      let imageBase64: string | undefined;
+      if (item.imageId) {
+        imageBase64 = await ImageService.getImageAsBase64(item.imageId) || undefined;
+      }
+
+      setFormData({
+        ...item,
+        image: imageBase64 // Load image for ImageCropper
+      });
     } else {
       setEditingItem(null);
       setFormData({
@@ -398,30 +417,43 @@ export const GoodsList: React.FC = () => {
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.workId || !formData.categoryId) {
-      alert('請填寫完整資訊');
+      toast.error('請填寫完整資訊');
       return;
     }
 
-    const payload = {
-      ...formData,
-      id: editingItem?.id || crypto.randomUUID(),
-      // Ensure numerical values are numbers, default to 0 if empty
-      price: Number(formData.price || 0),
-      quantity: Number(formData.quantity || 0),
-      depositAmount: formData.depositAmount ? Number(formData.depositAmount) : undefined,
-    } as GoodsItem;
-
     try {
-        if (editingItem) {
-          await StorageService.updateItem(payload);
-        } else {
-          await StorageService.addItem(payload);
-        }
-        setIsFormOpen(false);
-        refreshData();
+      // Handle image storage
+      let imageId = formData.imageId;
+
+      // If there's a new base64 image, save it as Blob
+      if (formData.image) {
+        // Update image (delete old, save new)
+        imageId = await ImageService.updateImage(editingItem?.imageId, formData.image);
+      }
+
+      const payload = {
+        ...formData,
+        id: editingItem?.id || crypto.randomUUID(),
+        imageId, // Store the image ID
+        image: undefined, // Don't store base64 anymore
+        // Ensure numerical values are numbers, default to 0 if empty
+        price: Number(formData.price || 0),
+        quantity: Number(formData.quantity || 0),
+        depositAmount: formData.depositAmount ? Number(formData.depositAmount) : undefined,
+      } as GoodsItem;
+
+      if (editingItem) {
+        await StorageService.updateItem(payload);
+        toast.success('周邊已更新');
+      } else {
+        await StorageService.addItem(payload);
+        toast.success('周邊已新增');
+      }
+      setIsFormOpen(false);
+      refreshData();
     } catch (error) {
         console.error(error);
-        alert('儲存失敗！');
+        toast.error('儲存失敗');
     }
   };
 
@@ -448,44 +480,6 @@ export const GoodsList: React.FC = () => {
   };
 
   // --- Render Helpers ---
-
-  // Use Theme Colors instead of hardcoded colors
-  const getStatusColor = (status: ItemStatus) => {
-    switch (status) {
-      case ItemStatus.ARRIVED: return 'bg-secondary/10 text-secondary-dark border-secondary/20';
-      case ItemStatus.PREORDER: return 'bg-primary/20 text-gray-800 border-primary/30';
-      case ItemStatus.NOT_ON_HAND: return 'bg-gray-100 text-gray-600 border-gray-200';
-      case ItemStatus.FOR_SALE: return 'bg-white border-dashed border-gray-300 text-gray-500';
-      default: return 'bg-gray-100';
-    }
-  };
-
-  // Use Theme Colors
-  const getConditionColor = (cond?: ConditionStatus) => {
-      if (cond === ConditionStatus.OPENED) return 'bg-gray-100 text-gray-500 border-gray-200';
-      if (cond === ConditionStatus.CHECKED) return 'bg-primary/20 text-gray-800 border-primary/30';
-      // Default NEW
-      return 'bg-secondary/10 text-secondary-dark border-secondary/20'; 
-  };
-
-  // Payment Status Colors (Themed)
-  const getPaymentStatusColor = (status: PaymentStatus) => {
-    switch (status) {
-      case PaymentStatus.PAID_FULL: return 'bg-secondary/10 text-secondary-dark border-secondary/20';
-      case PaymentStatus.PAID_DEPOSIT: return 'bg-primary/30 text-gray-900 border-primary/40';
-      case PaymentStatus.COD: return 'bg-gray-100 text-gray-500 border-gray-200';
-      case PaymentStatus.FORGOTTEN: return 'bg-gray-200 text-gray-600 border-gray-300';
-      default: return 'bg-gray-100 text-gray-400';
-    }
-  };
-
-  // Safe Input Handler for Numbers
-  const handleNumberInput = (field: keyof GoodsItem, val: string) => {
-      setFormData({
-          ...formData,
-          [field]: val === '' ? ('' as any) : Number(val)
-      });
-  };
 
   if (isLoading && items.length === 0) {
       return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
@@ -739,106 +733,15 @@ export const GoodsList: React.FC = () => {
             {/* 3 Columns on Mobile (grid-cols-3) */}
             <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-5">
                 {filteredItems.map(item => (
-                    <div
+                    <ItemCard
                         key={item.id}
-                        data-draggable-id={item.id}
-                        draggable={sortBy === 'default'}
-                        onClick={() => openForm(item)}
-                        className={`bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative ${
-                          goodsDrag.draggedId === item.id
-                            ? 'opacity-50 scale-95'
-                            : goodsDrag.dragOverId === item.id
-                              ? 'ring-2 ring-secondary scale-105'
-                              : ''
-                        }`}
-                        {...(sortBy === 'default' ? goodsDrag.handlers : {})}
-                        onDragStart={(e) => sortBy === 'default' && goodsDrag.handlers.onDragStart(e, item.id)}
-                        onDragOver={(e) => sortBy === 'default' && goodsDrag.handlers.onDragOver(e, item.id)}
-                        onDrop={(e) => sortBy === 'default' && goodsDrag.handlers.onDrop(e, item.id)}
-                        onTouchStart={(e) => sortBy === 'default' && goodsDrag.handlers.onTouchStart(e, item.id)}
-                    >
-                        <div className="relative aspect-square bg-gray-50 overflow-hidden m-1 md:m-2 rounded-lg md:rounded-2xl">
-                            {item.image ? (
-                                <img src={item.image} alt={item.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 z-0" />
-                            ) : (
-                                <div className="w-full h-full flex items-center justify-center text-gray-200">
-                                    <Package size={24} />
-                                </div>
-                            )}
-                            
-                            {/* Status Tag (Top Right) */}
-                            <div className="absolute top-1 right-1 md:top-2 md:right-2 flex flex-col gap-1 items-end z-10">
-                                <span className={`px-1.5 py-0.5 md:px-3 md:py-1 rounded-full text-[9px] md:text-xs font-bold border shadow-sm backdrop-blur-md bg-white/95 ${getStatusColor(item.status)}`}>
-                                    {item.status}
-                                </span>
-                            </div>
-
-                            {/* Condition Tag (Top Left) */}
-                            <div className="absolute top-1 left-1 md:top-2 md:left-2 flex flex-col gap-1 items-start z-10">
-                                <span className={`px-1.5 py-0.5 md:px-2 md:py-0.5 rounded-md text-[8px] md:text-[10px] font-bold border shadow-sm backdrop-blur-md bg-white/95 flex items-center gap-0.5 ${getConditionColor(item.condition)}`}>
-                                    {item.condition === ConditionStatus.NEW && <Sparkle size={8} className="md:w-3 md:h-3" />}
-                                    {item.condition || ConditionStatus.NEW}
-                                </span>
-                            </div>
-
-                            {/* Hover Edit/Delete Overlay - Visible on Desktop Hover */}
-                            <div className="absolute inset-0 bg-gray-900/10 backdrop-blur-[1px] opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-col md:flex-row items-center justify-center gap-1 md:gap-3 z-20 pointer-events-none md:pointer-events-auto">
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); openForm(item); }} 
-                                    className="bg-white text-gray-700 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
-                                >
-                                    <Edit2 size={14} className="pointer-events-none"/>
-                                </button>
-                                <button 
-                                    onClick={(e) => handleDeleteItem(item.id, e)} 
-                                    className="bg-white text-red-400 p-1.5 md:px-5 md:py-2 rounded-full text-xs font-bold shadow-lg hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
-                                >
-                                    <Trash2 size={14} className="pointer-events-none"/>
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div className="px-2 md:px-5 pb-2 md:pb-5 pt-0.5 md:pt-1 flex flex-col flex-1">
-                            <h3 className="font-bold text-gray-800 text-[11px] md:text-lg mb-0.5 md:mb-1 truncate leading-tight">{item.name}</h3>
-                            
-                            <div className="flex flex-col md:flex-row justify-between md:items-end mt-auto gap-0.5 md:gap-1">
-                                <div className="space-y-0 md:space-y-1">
-                                    <p className="text-gray-400 text-[10px] md:text-xs flex items-center gap-1 font-medium hidden md:flex">
-                                        <Tag size={12} /> 
-                                        ${item.price} × {item.quantity}
-                                    </p>
-                                    <p className="text-secondary-dark font-black text-xs md:text-2xl tracking-tight leading-none">
-                                        ${(item.price * item.quantity).toLocaleString()}
-                                    </p>
-                                </div>
-                                <div className="text-left md:text-right space-y-0.5 md:space-y-1">
-                                    {item.paymentStatus === PaymentStatus.PAID_DEPOSIT && (
-                                        <span className="text-[9px] md:text-xs px-1 md:px-2 py-0.5 rounded-md bg-primary/10 text-primary-dark border border-primary/20 block w-fit md:ml-auto font-medium truncate max-w-full scale-90 md:scale-100 origin-left">
-                                            訂金 ${item.depositAmount}
-                                        </span>
-                                    )}
-                                    <span className={`text-[9px] md:text-xs px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-md border block w-fit md:ml-auto font-bold truncate max-w-full scale-90 md:scale-100 origin-left ${getPaymentStatusColor(item.paymentStatus)}`}>
-                                        {item.paymentStatus}
-                                    </span>
-                                </div>
-                            </div>
-
-                             {/* Source Info (Desktop Only) */}
-                            <div className="hidden md:flex mt-4 pt-3 border-t border-dashed border-gray-100 items-center text-xs text-gray-400 gap-1.5 truncate">
-                                {item.sourceType === SourceType.PROXY ? (
-                                    <>
-                                        <div className="p-1 bg-primary-light rounded-full text-gray-600"><Package size={10} /></div>
-                                        <span className="font-medium">代購: <span className="text-gray-600">{proxies.find(p => p.id === item.proxyId)?.name || '未知'}</span></span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="p-1 bg-blue-50 rounded-full text-blue-400"><MapPin size={10} /></div>
-                                        <span className="font-medium">自購: <span className="text-gray-600">{item.purchaseLocation || '未填寫'}</span></span>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
+                        item={item}
+                        proxies={proxies}
+                        sortBy={sortBy}
+                        dragHandlers={goodsDrag}
+                        onEdit={openForm}
+                        onDelete={handleDeleteItem}
+                    />
                 ))}
             </div>
             
@@ -878,536 +781,66 @@ export const GoodsList: React.FC = () => {
       )}
 
       {/* 2. Manager Modal */}
-      {isManagerOpen && currentWork && (
-          <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-[2rem] w-full max-w-lg shadow-2xl border-4 border-white flex flex-col max-h-[85vh] overflow-hidden">
-                  <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-primary-light/30">
-                      <h3 className="font-black text-lg text-gray-700 flex items-center gap-2">
-                        <Settings size={20} className="text-gray-400" />
-                        管理：{currentWork.name}
-                      </h3>
-                      <button onClick={() => setIsManagerOpen(false)} className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-400 flex items-center justify-center transition-colors">
-                          <X size={20} />
-                      </button>
-                  </div>
-
-                  <div className="flex border-b border-gray-100">
-                      <button 
-                        onClick={() => setManagerTab('categories')}
-                        className={`flex-1 py-3 font-bold text-sm transition-colors ${managerTab === 'categories' ? 'text-primary-dark border-b-2 border-primary bg-primary/5' : 'text-gray-400 hover:bg-gray-50'}`}
-                      >
-                        分類管理
-                      </button>
-                      <button 
-                        onClick={() => setManagerTab('work')}
-                        className={`flex-1 py-3 font-bold text-sm transition-colors ${managerTab === 'work' ? 'text-primary-dark border-b-2 border-primary bg-primary/5' : 'text-gray-400 hover:bg-gray-50'}`}
-                      >
-                        作品設定
-                      </button>
-                  </div>
-
-                  <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
-                      {managerTab === 'categories' ? (
-                          <div className="space-y-6">
-                              <div className="flex gap-2">
-                                  <input 
-                                    type="text" 
-                                    value={newCategoryName}
-                                    onChange={e => setNewCategoryName(e.target.value)}
-                                    placeholder="新增分類 (例如: 拍立得)"
-                                    className="flex-1 border-2 border-gray-100 rounded-xl px-4 py-2 focus:border-primary focus:outline-none bg-white text-gray-900 font-medium text-sm"
-                                  />
-                                  <button onClick={handleAddCategory} disabled={!newCategoryName.trim()} className="bg-gray-800 text-white px-4 rounded-xl font-bold text-sm hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
-                                    新增
-                                  </button>
-                              </div>
-
-                              <div className="space-y-2">
-                                  {sortedCategories.map(cat => (
-                                      <div
-                                        key={cat.id}
-                                        className={`flex items-center gap-2 p-3 bg-white border border-gray-100 rounded-xl hover:border-primary-light transition-colors group ${
-                                          categoriesDrag.draggedId === cat.id
-                                            ? 'opacity-50 bg-gray-100'
-                                            : categoriesDrag.dragOverId === cat.id
-                                              ? 'border-secondary bg-secondary/10'
-                                              : ''
-                                        }`}
-                                        data-draggable-id={cat.id}
-                                        draggable
-                                        {...categoriesDrag.handlers}
-                                        onDragStart={(e) => categoriesDrag.handlers.onDragStart(e, cat.id)}
-                                        onDragOver={(e) => categoriesDrag.handlers.onDragOver(e, cat.id)}
-                                        onDrop={(e) => categoriesDrag.handlers.onDrop(e, cat.id)}
-                                        onTouchStart={(e) => categoriesDrag.handlers.onTouchStart(e, cat.id)}
-                                      >
-                                          <GripVertical size={16} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                                          {editingCatId === cat.id ? (
-                                              <div className="flex-1 flex gap-2">
-                                                  <input
-                                                    autoFocus
-                                                    type="text"
-                                                    value={editingCatName}
-                                                    onChange={e => setEditingCatName(e.target.value)}
-                                                    className="flex-1 border-b-2 border-primary focus:outline-none font-bold text-gray-900 bg-transparent px-1"
-                                                  />
-                                                  <button onClick={() => handleUpdateCategory(cat.id)} className="text-green-500 hover:bg-green-50 p-1 rounded">
-                                                      <Check size={16} />
-                                                  </button>
-                                                  <button onClick={() => setEditingCatId(null)} className="text-gray-400 hover:bg-gray-50 p-1 rounded">
-                                                      <X size={16} />
-                                                  </button>
-                                              </div>
-                                          ) : (
-                                              <>
-                                                  <span className="flex-1 font-bold text-gray-600 px-1">{cat.name}</span>
-                                                  <div className="flex gap-1">
-                                                      <button
-                                                        onClick={() => { setEditingCatId(cat.id); setEditingCatName(cat.name); }}
-                                                        className="p-2 text-gray-400 hover:text-primary-dark hover:bg-primary-light rounded-lg transition-colors cursor-pointer"
-                                                      >
-                                                          <Edit2 size={16} className="pointer-events-none" />
-                                                      </button>
-                                                      <button
-                                                        onClick={() => handleDeleteCategory(cat.id, cat.name)}
-                                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                                                      >
-                                                          <Trash2 size={16} className="pointer-events-none" />
-                                                      </button>
-                                                  </div>
-                                              </>
-                                          )}
-                                      </div>
-                                  ))}
-                                  {sortedCategories.length === 0 && (
-                                      <p className="text-center text-gray-400 text-sm py-4">目前沒有分類</p>
-                                  )}
-                              </div>
-                          </div>
-                      ) : (
-                          <div className="space-y-8">
-                              <div>
-                                  <label className="block text-sm font-bold text-gray-700 mb-2">修改作品名稱</label>
-                                  <div className="flex gap-3">
-                                      <input 
-                                        type="text" 
-                                        value={editWorkName}
-                                        onChange={e => setEditWorkName(e.target.value)}
-                                        className="flex-1 border-2 border-gray-100 rounded-xl p-3 focus:border-primary focus:outline-none font-medium text-gray-900 bg-white"
-                                      />
-                                      <button onClick={handleUpdateWorkName} className="bg-primary text-gray-900 px-5 rounded-xl font-bold shadow-md shadow-primary/20 hover:bg-primary-dark cursor-pointer">
-                                          儲存
-                                      </button>
-                                  </div>
-                              </div>
-
-                              <div className="pt-6 border-t border-dashed border-gray-200">
-                                  <h4 className="font-bold text-red-500 flex items-center gap-2 mb-3">
-                                      <AlertTriangle size={18} /> 危險區域
-                                  </h4>
-                                  <p className="text-xs text-gray-500 mb-4">
-                                      刪除此作品將會<span className="font-bold text-red-500">永久刪除</span>該作品底下的所有分類與周邊商品資料。此動作無法復原。
-                                  </p>
-                                  <button 
-                                    onClick={handleDeleteWork}
-                                    className="w-full py-3 border-2 border-red-100 text-red-500 bg-red-50/50 rounded-xl font-bold hover:bg-red-100 hover:border-red-200 transition-colors cursor-pointer"
-                                  >
-                                      刪除整個作品
-                                  </button>
-                              </div>
-                          </div>
-                      )}
-                  </div>
-              </div>
-          </div>
-      )}
+      <WorkManager
+        isOpen={isManagerOpen}
+        currentWork={currentWork || null}
+        sortedCategories={sortedCategories}
+        categoriesDragHandlers={categoriesDrag}
+        onClose={() => setIsManagerOpen(false)}
+        onUpdateWorkName={async (name) => {
+          if (selectedWorkId && name.trim()) {
+            await StorageService.updateWork(selectedWorkId, name);
+            refreshData();
+            toast.success('作品名稱已更新');
+          }
+        }}
+        onDeleteWork={handleDeleteWork}
+        onAddCategory={async (name) => {
+          if (selectedWorkId && name.trim()) {
+            await StorageService.addCategoryToWork(selectedWorkId, name);
+            refreshData();
+          }
+        }}
+        onUpdateCategory={async (catId, name) => {
+          if (selectedWorkId && name.trim()) {
+            await StorageService.updateCategory(selectedWorkId, catId, name);
+            refreshData();
+          }
+        }}
+        onDeleteCategory={handleDeleteCategory}
+      />
 
       {/* 4. Statistics Modal */}
-      {isStatsOpen && (
-          <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-[2.5rem] w-full max-w-md shadow-2xl border-4 border-white flex flex-col max-h-[85vh] overflow-hidden">
-                  <div className="px-6 py-5 border-b border-gray-100 bg-primary-light/30 flex justify-between items-center flex-shrink-0">
-                      <div>
-                          <h3 className="font-black text-xl text-gray-800 flex items-center gap-2">
-                             <TrendingUp size={24} className="text-secondary-dark" />
-                             資產統計
-                          </h3>
-                          <p className="text-xs text-gray-500 font-bold mt-1">目前所有收藏的總價值與待補款</p>
-                      </div>
-                      <button onClick={() => setIsStatsOpen(false)} className="w-8 h-8 rounded-full bg-white text-gray-400 hover:bg-gray-100 flex items-center justify-center transition-colors shadow-sm cursor-pointer">
-                          <X size={20} />
-                      </button>
-                  </div>
-                  
-                  <div className="overflow-y-auto custom-scrollbar flex-1 bg-white p-6">
-                      {/* Grand Total Card */}
-                      <div className="bg-gradient-to-br from-secondary to-secondary-dark rounded-3xl p-6 text-white shadow-lg shadow-secondary/20 mb-4 relative overflow-hidden">
-                          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
-                          <p className="text-white font-bold mb-1 opacity-80">總資產估值 (Grand Total)</p>
-                          <h2 className="text-4xl font-black tracking-tight">${statistics.grandTotal.toLocaleString()}</h2>
-                      </div>
-
-                      {/* Unpaid Amount Card */}
-                      <div className="bg-secondary/5 border-2 border-secondary/20 rounded-3xl p-5 mb-8 flex items-center justify-between">
-                         <div>
-                            <p className="text-secondary-dark font-bold text-sm mb-1 flex items-center gap-1">
-                                <CircleDollarSign size={16} /> 預估待補款 (Unpaid)
-                            </p>
-                            <h3 className="text-2xl font-black text-secondary-dark">${statistics.unpaidTotal.toLocaleString()}</h3>
-                         </div>
-                         <div className="w-10 h-10 bg-secondary/20 rounded-full flex items-center justify-center text-secondary-dark">
-                            <Calculator size={20} />
-                         </div>
-                      </div>
-
-                      <h4 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
-                          <Package size={18} /> 作品排行
-                      </h4>
-                      
-                      <div className="space-y-3">
-                          {statistics.workStats.map((stat) => (
-                              <div key={stat.id} className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                  <button 
-                                    onClick={() => setExpandedStatWorkId(expandedStatWorkId === stat.id ? null : stat.id)}
-                                    className="w-full flex items-center justify-between p-4 bg-white hover:bg-gray-50 transition-colors"
-                                  >
-                                      <div className="flex items-center gap-3">
-                                          <div className={`transition-transform duration-300 ${expandedStatWorkId === stat.id ? 'rotate-90' : ''}`}>
-                                              <ChevronRight size={16} className="text-gray-400" />
-                                          </div>
-                                          <div className="text-left">
-                                              <p className="font-bold text-gray-800">{stat.name}</p>
-                                              <p className="text-xs text-gray-400 font-medium">{stat.count} 項物品</p>
-                                          </div>
-                                      </div>
-                                      <p className="font-black text-gray-700">${stat.total.toLocaleString()}</p>
-                                  </button>
-                                  
-                                  {/* Categories Breakdown */}
-                                  {expandedStatWorkId === stat.id && (
-                                      <div className="bg-gray-50 p-3 space-y-1 border-t border-gray-100">
-                                          {stat.categories.filter(c => c.total > 0).map((cat, idx) => (
-                                              <div key={idx} className="flex justify-between items-center py-2 px-3 rounded-xl hover:bg-gray-100 transition-colors">
-                                                  <span className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                                                      <div className="w-1.5 h-1.5 rounded-full bg-secondary"></div>
-                                                      {cat.name}
-                                                  </span>
-                                                  <span className="text-sm font-bold text-gray-500">${cat.total.toLocaleString()}</span>
-                                              </div>
-                                          ))}
-                                          {stat.categories.every(c => c.total === 0) && (
-                                              <p className="text-center text-xs text-gray-400 py-2">無金額資料</p>
-                                          )}
-                                      </div>
-                                  )}
-                              </div>
-                          ))}
-                          
-                          {statistics.workStats.length === 0 && (
-                              <p className="text-center text-gray-400 py-8">目前沒有資料</p>
-                          )}
-                      </div>
-                  </div>
-              </div>
-          </div>
-      )}
+      <StatsModal
+        isOpen={isStatsOpen}
+        statistics={statistics}
+        onClose={() => setIsStatsOpen(false)}
+      />
 
       {/* 3. Item Form Modal */}
-      {isFormOpen && (
-        <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-white rounded-[2rem] w-full max-w-2xl my-8 overflow-hidden shadow-2xl flex flex-col max-h-[90vh] border-4 border-white">
-                <div className="px-8 py-5 border-b border-gray-100 bg-white flex justify-between items-center flex-shrink-0">
-                    <h3 className="font-black text-xl text-gray-800 flex items-center gap-2">
-                        {editingItem ? <Edit2 size={24} className="text-primary-dark"/> : <Sparkle size={24} className="text-primary-dark"/>}
-                        {editingItem ? ' 編輯周邊' : ' 新增周邊'}
-                    </h3>
-                    <button onClick={() => setIsFormOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors cursor-pointer">✕</button>
-                </div>
-                
-                <form onSubmit={handleFormSubmit} className="p-8 overflow-y-auto custom-scrollbar space-y-8">
-                    {/* Image Section */}
-                    <div className="flex justify-center">
-                        <div className="w-full max-w-xs">
-                             <ImageCropper 
-                                key={editingItem ? editingItem.id : 'new-item'}
-                                initialImage={formData.image} 
-                                onImageCropped={(base64) => setFormData(prev => ({ ...prev, image: base64 }))} 
-                             />
-                             <p className="text-xs text-center text-gray-400 mt-3 font-medium">支援上傳後裁切為正方形</p>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Name */}
-                        <div className="col-span-full">
-                            <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">品項名稱 <span className="text-secondary-dark">*</span></label>
-                            <input
-                                required
-                                type="text"
-                                value={formData.name || ''}
-                                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                                className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 font-medium bg-white text-gray-900"
-                                placeholder="例如: 2024年生日徽章"
-                            />
-                            {/* NEW: Original Name (Optional) */}
-                            <div className="mt-4">
-                                <label className="block text-sm font-bold text-gray-500 mb-2 ml-1">商品原文名稱 <span className="text-xs font-normal text-gray-400">(非必填)</span></label>
-                                <input
-                                    type="text"
-                                    value={formData.originalName || ''}
-                                    onChange={e => setFormData({ ...formData, originalName: e.target.value })}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 font-medium bg-white text-gray-900 text-sm"
-                                    placeholder="例如: 2024 Birthday Badge / 2024年バースデー缶バッジ"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Work Select */}
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">所屬作品 <span className="text-secondary-dark">*</span></label>
-                             <div className="relative">
-                                <select
-                                    required
-                                    value={formData.workId || ''}
-                                    onChange={e => {
-                                        const wid = e.target.value;
-                                        setFormData({ 
-                                            ...formData, 
-                                            workId: wid, 
-                                            categoryId: '' // Reset cat on work change
-                                        });
-                                    }}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 appearance-none bg-white font-medium text-gray-900"
-                                >
-                                    <option value="" disabled>選擇作品</option>
-                                    {works.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                                </select>
-                                <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">▼</div>
-                             </div>
-                             {works.length === 0 && <p className="text-xs text-red-400 mt-2 ml-1 font-bold">請先在左側欄位新增作品</p>}
-                        </div>
-
-                        {/* Category Select */}
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">分類 <span className="text-secondary-dark">*</span></label>
-                             <div className="relative">
-                                <select
-                                    required
-                                    value={formData.categoryId || ''}
-                                    onChange={e => setFormData({ ...formData, categoryId: e.target.value })}
-                                    disabled={!formData.workId}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 appearance-none bg-white disabled:bg-gray-50 font-medium text-gray-900"
-                                >
-                                    <option value="" disabled>選擇分類</option>
-                                    {formData.workId && works.find(w => w.id === formData.workId)?.categories.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                </select>
-                                <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">▼</div>
-                             </div>
-                        </div>
-
-                        {/* Price & Quantity */}
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">單價</label>
-                             <div className="relative">
-                                <span className="absolute left-4 top-3 text-gray-400 font-bold">$</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={formData.price ?? ''}
-                                    onChange={e => handleNumberInput('price', e.target.value)}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 pl-8 font-bold text-gray-900 bg-white"
-                                />
-                             </div>
-                        </div>
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">數量</label>
-                             <input
-                                type="number"
-                                min="1"
-                                value={formData.quantity ?? ''}
-                                onChange={e => handleNumberInput('quantity', e.target.value)}
-                                className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 font-bold text-gray-900 bg-white"
-                             />
-                        </div>
-                        
-                        {/* Status */}
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">物品狀態</label>
-                             <div className="relative">
-                                <select
-                                    value={formData.status}
-                                    onChange={e => setFormData({ ...formData, status: e.target.value as ItemStatus })}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 appearance-none bg-white font-medium text-gray-900"
-                                >
-                                    {Object.values(ItemStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                                <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">▼</div>
-                             </div>
-                        </div>
-
-                        {/* Condition Status */}
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">商品狀況</label>
-                             <div className="relative">
-                                <select
-                                    value={formData.condition || ConditionStatus.NEW}
-                                    onChange={e => setFormData({ ...formData, condition: e.target.value as ConditionStatus })}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 appearance-none bg-white font-medium text-gray-900"
-                                >
-                                    {Object.values(ConditionStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                                <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">▼</div>
-                             </div>
-                        </div>
-
-                         {/* Payment Status */}
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">付款狀態</label>
-                             <div className="relative">
-                                <select
-                                    value={formData.paymentStatus}
-                                    onChange={e => setFormData({ ...formData, paymentStatus: e.target.value as PaymentStatus })}
-                                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 appearance-none bg-white font-medium text-gray-900"
-                                >
-                                    {Object.values(PaymentStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                                <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">▼</div>
-                             </div>
-                        </div>
-                        
-                        {formData.paymentStatus === PaymentStatus.PAID_DEPOSIT && (
-                            <div className="col-span-full animate-in fade-in slide-in-from-top-2 duration-300">
-                                <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">已付訂金金額</label>
-                                <div className="relative">
-                                   <span className="absolute left-4 top-3 text-gray-400 font-bold">$</span>
-                                   <input
-                                       type="number"
-                                       min="0"
-                                       value={formData.depositAmount ?? ''}
-                                       onChange={e => handleNumberInput('depositAmount', e.target.value)}
-                                       className="w-full border-2 border-yellow-200 bg-yellow-50 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 pl-8 font-bold text-gray-900"
-                                       placeholder="請輸入訂金金額"
-                                   />
-                                </div>
-                            </div>
-                        )}
-                        
-                        {/* Source Selection Logic */}
-                        <div className="col-span-full pt-4 border-t border-dashed border-gray-200">
-                             <div className="flex gap-4 mb-4">
-                                <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition font-bold ${formData.sourceType === SourceType.PROXY ? 'border-secondary bg-secondary/5 text-secondary-dark' : 'border-gray-100 text-gray-400 hover:bg-gray-50'}`}>
-                                    <input 
-                                        type="radio" 
-                                        name="sourceType" 
-                                        className="hidden" 
-                                        checked={formData.sourceType === SourceType.PROXY} 
-                                        onChange={() => setFormData({...formData, sourceType: SourceType.PROXY})} 
-                                    />
-                                    <Package size={18} className="pointer-events-none" /> 找代購
-                                </label>
-                                <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition font-bold ${formData.sourceType === SourceType.SELF ? 'border-primary bg-primary/10 text-gray-800' : 'border-gray-100 text-gray-400 hover:bg-gray-50'}`}>
-                                    <input 
-                                        type="radio" 
-                                        name="sourceType" 
-                                        className="hidden" 
-                                        checked={formData.sourceType === SourceType.SELF} 
-                                        onChange={() => setFormData({...formData, sourceType: SourceType.SELF})} 
-                                    />
-                                    <MapPin size={18} className="pointer-events-none" /> 自己買
-                                </label>
-                             </div>
-                             
-                             {formData.sourceType === SourceType.PROXY ? (
-                                 <div>
-                                     <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">選擇代購</label>
-                                     <div className="relative">
-                                        <select
-                                            value={formData.proxyId || ''}
-                                            onChange={e => setFormData({ ...formData, proxyId: e.target.value })}
-                                            className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-secondary focus:outline-none p-3 appearance-none bg-white font-medium text-gray-900"
-                                        >
-                                            <option value="">-- 請選擇代購 --</option>
-                                            {proxies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                        </select>
-                                        <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">▼</div>
-                                     </div>
-                                     {proxies.length === 0 && <p className="text-xs text-red-400 mt-2 ml-1">目前無代購資料，請先至代購頁面新增</p>}
-                                 </div>
-                             ) : (
-                                 <div>
-                                     <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">購買地點</label>
-                                     <input
-                                        type="text"
-                                        value={formData.purchaseLocation || ''}
-                                        onChange={e => setFormData({ ...formData, purchaseLocation: e.target.value })}
-                                        className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 font-medium bg-white text-gray-900"
-                                        placeholder="例如: 安利美特、日本現地..."
-                                     />
-                                 </div>
-                             )}
-                        </div>
-                    </div>
-                </form>
-                
-                <div className="p-6 border-t border-gray-100 bg-gray-50 flex gap-4 flex-shrink-0">
-                    {editingItem && (
-                        <button
-                            type="button"
-                            onClick={(e) => handleDeleteItem(editingItem.id, e)}
-                            className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center cursor-pointer"
-                            title="刪除此周邊"
-                        >
-                            <Trash2 size={20} className="pointer-events-none" />
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        onClick={() => setIsFormOpen(false)}
-                        className="flex-1 py-3 border-2 border-gray-200 text-gray-500 rounded-xl hover:bg-white hover:border-gray-300 font-bold transition cursor-pointer"
-                    >
-                        取消
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleFormSubmit}
-                        className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark shadow-lg shadow-primary/20 font-bold transition transform active:scale-95 cursor-pointer"
-                    >
-                        儲存
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
+      <ItemForm
+        isOpen={isFormOpen}
+        editingItem={editingItem}
+        formData={formData}
+        works={works}
+        proxies={proxies}
+        onClose={() => setIsFormOpen(false)}
+        onSubmit={handleFormSubmit}
+        onDelete={handleDeleteItem}
+        onFormDataChange={setFormData}
+      />
 
       {/* 5. Custom Confirm Dialog */}
-      {confirmConfig && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border-2 border-white animate-in zoom-in-95">
-              <div className="p-6">
-                 <h3 className="text-lg font-black text-gray-800 mb-3">{confirmConfig.title}</h3>
-                 <div className="text-sm font-medium text-gray-600 mb-6 leading-relaxed">
-                    {confirmConfig.message}
-                 </div>
-                 <div className="flex gap-3">
-                    <button 
-                      onClick={() => setConfirmConfig(null)}
-                      className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition cursor-pointer"
-                    >
-                       取消
-                    </button>
-                    <button 
-                      onClick={confirmConfig.onConfirm}
-                      className={`flex-1 py-2.5 text-white rounded-xl font-bold shadow-md transition transform active:scale-95 cursor-pointer ${confirmConfig.isDangerous ? 'bg-red-500 hover:bg-red-600 shadow-red-200' : 'bg-primary text-gray-900 hover:bg-primary-dark'}`}
-                    >
-                       確認刪除
-                    </button>
-                 </div>
-              </div>
-           </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={!!confirmConfig}
+        title={confirmConfig?.title || ''}
+        message={confirmConfig?.message || ''}
+        isDangerous={confirmConfig?.isDangerous}
+        onCancel={() => setConfirmConfig(null)}
+        onConfirm={() => {
+          confirmConfig?.onConfirm();
+        }}
+      />
     </div>
   );
 };

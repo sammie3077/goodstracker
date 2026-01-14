@@ -6,6 +6,10 @@ import { GalleryItem, Work, GallerySpec } from '../types';
 import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Library, Sparkle, Loader2, Search, GripVertical, ArrowUpDown } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
 import { useLongPressDrag } from '../hooks/useLongPressDrag';
+import { useDebounce } from '../hooks/useDebounce';
+import { toast } from 'sonner';
+import { ImageService } from '../services/imageService';
+import { GalleryCard } from './GalleryList/GalleryCard';
 
 export const GalleryList: React.FC = () => {
   // Data State
@@ -16,6 +20,7 @@ export const GalleryList: React.FC = () => {
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GalleryItem | null>(null);
   const [sortBy, setSortBy] = useState<'default' | 'created_desc' | 'created_asc'>('default');
@@ -69,8 +74,8 @@ export const GalleryList: React.FC = () => {
       result = result.filter(i => i.workId === selectedWorkId);
     }
     // 2. Filter by Search Query
-    if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
+    if (debouncedSearchQuery.trim()) {
+        const query = debouncedSearchQuery.toLowerCase();
         result = result.filter(i =>
             i.name.toLowerCase().includes(query) ||
             (i.originalName && i.originalName.toLowerCase().includes(query))
@@ -94,7 +99,7 @@ export const GalleryList: React.FC = () => {
         default: return b.createdAt - a.createdAt;
       }
     });
-  }, [items, selectedWorkId, searchQuery, sortBy]);
+  }, [items, selectedWorkId, debouncedSearchQuery, sortBy]);
 
   const currentWork = works.find(w => w.id === selectedWorkId);
 
@@ -166,7 +171,7 @@ export const GalleryList: React.FC = () => {
     if (selectedWorkId && editWorkName.trim()) {
       await StorageService.updateWork(selectedWorkId, editWorkName);
       refreshData();
-      alert('作品名稱已更新');
+      toast.success('作品名稱已更新');
     }
   };
 
@@ -190,8 +195,9 @@ export const GalleryList: React.FC = () => {
                 setSelectedWorkId(null);
                 setIsManagerOpen(false);
                 refreshData();
+                toast.success('作品已刪除');
             } catch (e) {
-                alert('刪除失敗');
+                toast.error('刪除失敗');
                 console.error(e);
             }
             setConfirmConfig(null);
@@ -199,12 +205,22 @@ export const GalleryList: React.FC = () => {
     });
   };
 
-  const openForm = (item?: GalleryItem) => {
+  const openForm = async (item?: GalleryItem) => {
     setBatchCount(10); // Reset batch count default
     setIsSpecEditMode(false); // Default to collection mode
     if (item) {
       setEditingItem(item);
-      setFormData({ ...item });
+
+      // Load image as base64 for editing
+      let imageBase64: string | undefined;
+      if (item.imageId) {
+        imageBase64 = await ImageService.getImageAsBase64(item.imageId) || undefined;
+      }
+
+      setFormData({
+        ...item,
+        image: imageBase64 // Load image for ImageCropper
+      });
       setFormSpecs(JSON.parse(JSON.stringify(item.specs || []))); // Deep copy to avoid mutating directly
     } else {
       setEditingItem(null);
@@ -221,27 +237,40 @@ export const GalleryList: React.FC = () => {
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.workId) {
-      alert('請填寫完整資訊');
+      toast.error('請填寫完整資訊');
       return;
     }
 
-    const payload = {
-      ...formData,
-      id: editingItem?.id || crypto.randomUUID(),
-      specs: formSpecs,
-    } as GalleryItem;
-
     try {
-        if (editingItem) {
-          await StorageService.updateGalleryItem(payload);
-        } else {
-          await StorageService.addGalleryItem(payload);
-        }
-        setIsFormOpen(false);
-        refreshData();
+      // Handle image storage
+      let imageId = formData.imageId;
+
+      // If there's a new base64 image, save it as Blob
+      if (formData.image) {
+        // Update image (delete old, save new)
+        imageId = await ImageService.updateImage(editingItem?.imageId, formData.image);
+      }
+
+      const payload = {
+        ...formData,
+        id: editingItem?.id || crypto.randomUUID(),
+        imageId, // Store the image ID
+        image: undefined, // Don't store base64 anymore
+        specs: formSpecs,
+      } as GalleryItem;
+
+      if (editingItem) {
+        await StorageService.updateGalleryItem(payload);
+        toast.success('圖鑑已更新');
+      } else {
+        await StorageService.addGalleryItem(payload);
+        toast.success('圖鑑已新增');
+      }
+      setIsFormOpen(false);
+      refreshData();
     } catch (error) {
         console.error(error);
-        alert('儲存失敗！');
+        toast.error('儲存失敗');
     }
   };
 
@@ -455,67 +484,15 @@ export const GalleryList: React.FC = () => {
         {/* Grid Content */}
         <div className="p-2 md:p-6 flex-1 overflow-y-auto custom-scrollbar pb-24 md:pb-6">
             <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-5">
-                {filteredItems.map(item => {
-                    const totalSpecs = item.specs?.length || 0;
-                    const ownedSpecs = item.specs?.filter(s => s.isOwned).length || 0;
-                    const percent = totalSpecs > 0 ? Math.round((ownedSpecs / totalSpecs) * 100) : 0;
-
-                    return (
-                        <div
-                            key={item.id}
-                            data-draggable-id={item.id}
-                            draggable={sortBy === 'default'}
-                            onClick={() => openForm(item)}
-                            className={`bg-white rounded-xl md:rounded-3xl shadow-sm border border-primary-light overflow-hidden hover:shadow-xl hover:shadow-primary/20 transition-all duration-300 group flex flex-col hover:-translate-y-1 cursor-pointer relative ${
-                              galleryDrag.draggedId === item.id
-                                ? 'opacity-50 scale-95'
-                                : galleryDrag.dragOverId === item.id
-                                  ? 'ring-2 ring-secondary scale-105'
-                                  : ''
-                            }`}
-                            {...(sortBy === 'default' ? galleryDrag.handlers : {})}
-                            onDragStart={(e) => sortBy === 'default' && galleryDrag.handlers.onDragStart(e, item.id)}
-                            onDragOver={(e) => sortBy === 'default' && galleryDrag.handlers.onDragOver(e, item.id)}
-                            onDrop={(e) => sortBy === 'default' && galleryDrag.handlers.onDrop(e, item.id)}
-                            onTouchStart={(e) => sortBy === 'default' && galleryDrag.handlers.onTouchStart(e, item.id)}
-                        >
-                            <div className="relative aspect-square bg-gray-50 overflow-hidden m-1 md:m-2 rounded-lg md:rounded-2xl">
-                                {item.image ? (
-                                    <img src={item.image} alt={item.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 z-0" />
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-gray-200">
-                                        <Book size={24} />
-                                    </div>
-                                )}
-                                
-                                {/* Progress Badge */}
-                                <div className="absolute top-1 right-1 md:top-2 md:right-2 z-10">
-                                    <span className={`px-1.5 py-0.5 md:px-2 md:py-1 rounded-md text-[9px] md:text-xs font-bold border shadow-sm backdrop-blur-md bg-white/95 flex items-center gap-1 ${percent === 100 ? 'text-secondary-dark border-secondary/30' : 'text-gray-600 border-gray-100'}`}>
-                                        {percent === 100 && <Check size={10} strokeWidth={4} className="text-secondary-dark" />}
-                                        {ownedSpecs}/{totalSpecs}
-                                    </span>
-                                </div>
-                            </div>
-                            
-                            <div className="px-2 md:px-5 pb-2 md:pb-4 pt-0.5 md:pt-1 flex flex-col flex-1">
-                                <h3 className="font-bold text-gray-800 text-[11px] md:text-lg mb-1 md:mb-2 truncate leading-tight">{item.name}</h3>
-                                
-                                {/* Progress Bar */}
-                                <div className="mt-auto">
-                                    <div className="w-full h-1.5 md:h-2 bg-gray-100 rounded-full overflow-hidden">
-                                        <div 
-                                            className="h-full bg-secondary transition-all duration-500 ease-out rounded-full"
-                                            style={{ width: `${percent}%` }}
-                                        />
-                                    </div>
-                                    <div className="flex justify-between items-center mt-1">
-                                         <span className="text-[9px] md:text-xs text-gray-400 font-bold">{percent}% 收集</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
+                {filteredItems.map(item => (
+                    <GalleryCard
+                        key={item.id}
+                        item={item}
+                        sortBy={sortBy}
+                        dragHandlers={galleryDrag}
+                        onClick={() => openForm(item)}
+                    />
+                ))}
             </div>
             
             {filteredItems.length === 0 && (
