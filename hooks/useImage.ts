@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react';
 import { ImageService } from '../services/imageService';
 
 /**
- * Hook to load image from imageId
+ * Hook to load image from imageId with optional cache support
  * Returns the image URL for display
+ *
+ * @param imageId - The ID of the image to load
+ * @param cachedUrl - Optional pre-cached URL to use instead of loading
  */
-export const useImage = (imageId: string | undefined) => {
+export const useImage = (imageId: string | undefined, cachedUrl?: string | null) => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -15,12 +18,22 @@ export const useImage = (imageId: string | undefined) => {
       return;
     }
 
+    // Use cached URL if provided
+    if (cachedUrl !== undefined) {
+      setImageUrl(cachedUrl);
+      setIsLoading(false);
+      return;
+    }
+
+    // Load from IndexedDB
     let isMounted = true;
+    let objectUrl: string | null = null;
     setIsLoading(true);
 
     ImageService.getImage(imageId)
       .then((url) => {
-        if (isMounted) {
+        if (isMounted && url) {
+          objectUrl = url;
           setImageUrl(url);
           setIsLoading(false);
         }
@@ -34,13 +47,14 @@ export const useImage = (imageId: string | undefined) => {
       });
 
     // Cleanup: revoke object URL when component unmounts or imageId changes
+    // Note: Don't revoke if using cached URL
     return () => {
       isMounted = false;
-      if (imageUrl) {
-        URL.revokeObjectURL(imageUrl);
+      if (objectUrl && cachedUrl === undefined) {
+        URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [imageId]);
+  }, [imageId, cachedUrl]);
 
   return { imageUrl, isLoading };
 };

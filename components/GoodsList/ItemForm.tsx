@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { GoodsItem, Work, ItemStatus, PaymentStatus, ConditionStatus, SourceType, ProxyService } from '../../types';
-import { Edit2, Sparkle, Trash2, Package, MapPin } from 'lucide-react';
+import { Edit2, Sparkle, Trash2, Package, MapPin, Loader2, Calendar } from 'lucide-react';
 import { ImageCropper } from '../ImageCropper';
 
 interface ItemFormProps {
@@ -9,6 +9,8 @@ interface ItemFormProps {
   formData: Partial<GoodsItem>;
   works: Work[];
   proxies: ProxyService[];
+  isSaving?: boolean;
+  isDeleting?: boolean;
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
   onDelete: (id: string, e?: React.MouseEvent) => void;
@@ -21,11 +23,16 @@ export const ItemForm: React.FC<ItemFormProps> = ({
   formData,
   works,
   proxies,
+  isSaving = false,
+  isDeleting = false,
   onClose,
   onSubmit,
   onDelete,
   onFormDataChange,
 }) => {
+  // Track whether purchase date should be recorded
+  const [shouldRecordDate, setShouldRecordDate] = useState(!!formData.purchaseDate);
+
   if (!isOpen) return null;
 
   // Safe Input Handler for Numbers
@@ -34,6 +41,33 @@ export const ItemForm: React.FC<ItemFormProps> = ({
       ...formData,
       [field]: val === '' ? ('' as any) : Number(val)
     });
+  };
+
+  // Handle date checkbox toggle
+  const handleDateCheckboxChange = (checked: boolean) => {
+    setShouldRecordDate(checked);
+    if (!checked) {
+      // Clear purchase date if unchecked
+      onFormDataChange({ ...formData, purchaseDate: undefined });
+    }
+  };
+
+  // Handle date change
+  const handleDateChange = (dateString: string) => {
+    if (dateString) {
+      // Convert YYYY-MM-DD to timestamp
+      const timestamp = new Date(dateString).getTime();
+      onFormDataChange({ ...formData, purchaseDate: timestamp });
+    } else {
+      onFormDataChange({ ...formData, purchaseDate: undefined });
+    }
+  };
+
+  // Format timestamp to YYYY-MM-DD for input
+  const formatDateForInput = (timestamp?: number) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    return date.toISOString().split('T')[0];
   };
 
   return (
@@ -217,6 +251,37 @@ export const ItemForm: React.FC<ItemFormProps> = ({
               </div>
             )}
 
+            {/* Purchase Date Section */}
+            <div className="col-span-full pt-4 border-t border-dashed border-gray-200">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={shouldRecordDate}
+                  onChange={(e) => handleDateCheckboxChange(e.target.checked)}
+                  className="w-5 h-5 rounded border-2 border-gray-300 text-primary focus:ring-primary focus:ring-2 cursor-pointer accent-primary"
+                />
+                <span className="text-sm font-bold text-gray-700 group-hover:text-primary transition-colors flex items-center gap-2">
+                  <Calendar size={16} className="text-primary" />
+                  登記購買日期
+                </span>
+              </label>
+
+              {shouldRecordDate && (
+                <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="block text-sm font-bold text-gray-700 mb-2 ml-1">購買日期</label>
+                  <input
+                    type="date"
+                    value={formatDateForInput(formData.purchaseDate)}
+                    onChange={(e) => handleDateChange(e.target.value)}
+                    className="w-full border-2 border-gray-100 rounded-xl shadow-sm focus:border-primary focus:outline-none p-3 font-medium bg-white text-gray-900"
+                  />
+                  <p className="text-xs text-gray-400 mt-2 ml-1">
+                    登記日期後可在月度統計中查看每月支出
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Source Selection Logic */}
             <div className="col-span-full pt-4 border-t border-dashed border-gray-200">
               <div className="flex gap-4 mb-4">
@@ -279,25 +344,39 @@ export const ItemForm: React.FC<ItemFormProps> = ({
             <button
               type="button"
               onClick={(e) => onDelete(editingItem.id, e)}
-              className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center cursor-pointer"
+              disabled={isDeleting || isSaving}
+              className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               title="刪除此周邊"
             >
-              <Trash2 size={20} className="pointer-events-none" />
+              {isDeleting ? (
+                <Loader2 size={20} className="animate-spin pointer-events-none" />
+              ) : (
+                <Trash2 size={20} className="pointer-events-none" />
+              )}
             </button>
           )}
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 border-2 border-gray-200 text-gray-500 rounded-xl hover:bg-white hover:border-gray-300 font-bold transition cursor-pointer"
+            disabled={isSaving || isDeleting}
+            className="flex-1 py-3 border-2 border-gray-200 text-gray-500 rounded-xl hover:bg-white hover:border-gray-300 font-bold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             取消
           </button>
           <button
             type="button"
             onClick={onSubmit}
-            className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark shadow-lg shadow-primary/20 font-bold transition transform active:scale-95 cursor-pointer"
+            disabled={isSaving || isDeleting}
+            className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark shadow-lg shadow-primary/20 font-bold transition transform active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            儲存
+            {isSaving ? (
+              <>
+                <Loader2 size={18} className="animate-spin" />
+                <span>儲存中...</span>
+              </>
+            ) : (
+              '儲存'
+            )}
           </button>
         </div>
       </div>

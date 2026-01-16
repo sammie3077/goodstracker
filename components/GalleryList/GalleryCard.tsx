@@ -7,11 +7,12 @@ interface GalleryCardProps {
   item: GalleryItem;
   sortBy: string;
   dragHandlers: any;
+  cachedImageUrl?: string | null;
   onClick: () => void;
 }
 
-export const GalleryCard: React.FC<GalleryCardProps> = ({ item, sortBy, dragHandlers, onClick }) => {
-  const { imageUrl } = useImage(item.imageId);
+export const GalleryCard: React.FC<GalleryCardProps> = ({ item, sortBy, dragHandlers, cachedImageUrl, onClick }) => {
+  const { imageUrl } = useImage(item.imageId, cachedImageUrl);
 
   const totalSpecs = item.specs?.length || 0;
   const ownedSpecs = item.specs?.filter(s => s.isOwned).length || 0;

@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Default Theme Colors (Will be overridden by JS) */
+:root {
+  --color-primary: 252 211 77;
+  --color-primary-light: 254 243 199;
+  --color-primary-dark: 245 158 11;
+  --color-secondary: 78 205 196;
+  --color-secondary-dark: 42 157 143;
+  --color-background: 255 253 245;
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: 20px;
+}
+
+.custom-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+/* No Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Safe Area */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}

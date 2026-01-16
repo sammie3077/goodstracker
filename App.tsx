@@ -6,6 +6,8 @@ import { GalleryList } from './components/GalleryList';
 import { StorageService } from './services/storageService';
 import { LayoutGrid, Users, Palette, Check, X, Settings, Download, Upload, AlertTriangle, BookOpen, Loader2, Clock } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
+import { ImageCacheProvider } from './contexts/ImageCacheContext';
+import { UpdatePrompt } from './components/UpdatePrompt';
 
 // --- Theme Definitions ---
 
@@ -155,22 +157,80 @@ const App: React.FC = () => {
   const [lastBackupDate, setLastBackupDate] = useState<string | null>(() => localStorage.getItem('last_backup_date'));
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // PWA Update State
+  const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
+  const [waitingServiceWorker, setWaitingServiceWorker] = useState<ServiceWorker | null>(null);
+
   // Initialize DB and load theme
   useEffect(() => {
     const initApp = async () => {
         // Init DB (and perform migration if needed)
         await StorageService.init();
-        
+
         // Load Theme
         const savedTheme = localStorage.getItem('app_theme') as ThemeId;
         if (savedTheme && THEMES[savedTheme]) {
             setCurrentTheme(savedTheme);
         }
-        
+
         setIsInitializing(false);
     };
     initApp();
   }, []);
+
+  // Register Service Worker for PWA
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then((registration) => {
+          console.log('[App] Service Worker registered:', registration);
+
+          // 檢查是否有等待中的 Service Worker
+          if (registration.waiting) {
+            setWaitingServiceWorker(registration.waiting);
+            setShowUpdatePrompt(true);
+          }
+
+          // 監聽新的 Service Worker 安裝
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            if (newWorker) {
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  // 有新版本可用
+                  console.log('[App] New version available');
+                  setWaitingServiceWorker(newWorker);
+                  setShowUpdatePrompt(true);
+                }
+              });
+            }
+          });
+        })
+        .catch((error) => {
+          console.error('[App] Service Worker registration failed:', error);
+        });
+
+      // 監聽 Service Worker 控制器變更（更新完成）
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        console.log('[App] Service Worker controller changed, reloading...');
+        window.location.reload();
+      });
+    }
+  }, []);
+
+  // 處理更新
+  const handleUpdate = () => {
+    if (waitingServiceWorker) {
+      // 告訴等待中的 SW 立即接管
+      waitingServiceWorker.postMessage({ type: 'SKIP_WAITING' });
+      setShowUpdatePrompt(false);
+    }
+  };
+
+  // 關閉更新提示
+  const handleDismissUpdate = () => {
+    setShowUpdatePrompt(false);
+  };
 
   // Apply theme to CSS variables
   useEffect(() => {
@@ -237,9 +297,15 @@ const App: React.FC = () => {
         } else {
           toast.error('資料格式錯誤，無法還原');
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error(error);
-        toast.error('讀取檔案失敗');
+
+        // Handle quota exceeded error with friendly message
+        if (error.name === 'QuotaExceededError') {
+          toast.error('儲存空間不足，無法還原完整資料。請清理瀏覽器快取後重試。');
+        } else {
+          toast.error('讀取檔案失敗');
+        }
       }
     };
     reader.readAsText(file);
@@ -255,7 +321,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <>
+    <ImageCacheProvider>
       <Toaster position="top-center" richColors closeButton />
       <div className="min-h-screen bg-background text-gray-800 font-sans flex flex-col pb-20 md:pb-0 transition-colors duration-500">
       {/* Top Navigation */}
@@ -519,8 +585,16 @@ const App: React.FC = () => {
            </div>
         </div>
       )}
+
+      {/* Update Prompt */}
+      {showUpdatePrompt && (
+        <UpdatePrompt
+          onUpdate={handleUpdate}
+          onDismiss={handleDismissUpdate}
+        />
+      )}
       </div>
-    </>
+    </ImageCacheProvider>
   );
 };
 

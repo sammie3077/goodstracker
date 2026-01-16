@@ -3,16 +3,22 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
 import { DB, STORES } from '../services/db';
 import { GoodsItem, Work, Category, ItemStatus, PaymentStatus, SourceType, SortOption, ProxyService, ConditionStatus } from '../types';
-import { Plus, Search, Filter, ArrowUpDown, Package, X, Settings, Calculator, TrendingUp, Library, Loader2, GripVertical, ChevronRight, Sparkle } from 'lucide-react';
+import { Plus, Filter, ArrowUpDown, Package, X, Settings, Calculator, TrendingUp, Loader2, GripVertical, Library, ChevronRight, Search, Sparkle, Users, Calendar } from 'lucide-react';
 import { useLongPressDrag } from '../hooks/useLongPressDrag';
 import { useDebounce } from '../hooks/useDebounce';
+import { useWorkManagement } from '../hooks/useWorkManagement';
 import { toast } from 'sonner';
 import { ItemCard } from './GoodsList/ItemCard';
 import { ItemForm } from './GoodsList/ItemForm';
 import { StatsModal } from './GoodsList/StatsModal';
+import { MonthlyStatsModal } from './GoodsList/MonthlyStatsModal';
 import { WorkManager } from './GoodsList/WorkManager';
 import { ConfirmDialog } from './GoodsList/ConfirmDialog';
 import { ImageService } from '../services/imageService';
+import { useImageCache } from '../contexts/ImageCacheContext';
+import { WorkSidebar } from './shared/WorkSidebar';
+import { SearchBar } from './shared/SearchBar';
+import { AddWorkModal } from './shared/AddWorkModal';
 
 export const GoodsList: React.FC = () => {
   // Data State
@@ -20,7 +26,14 @@ export const GoodsList: React.FC = () => {
   const [works, setWorks] = useState<Work[]>([]);
   const [proxies, setProxies] = useState<ProxyService[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
+
+  // Operation Loading States
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Image Cache
+  const { preloadImages, getImage } = useImageCache();
+
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null); // Stores ID (specific work) or Name (all works)
@@ -28,7 +41,7 @@ export const GoodsList: React.FC = () => {
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GoodsItem | null>(null);
-  
+
   // Confirm Dialog State
   const [confirmConfig, setConfirmConfig] = useState<{
       isOpen: boolean;
@@ -41,14 +54,17 @@ export const GoodsList: React.FC = () => {
   // Filters & Sort
   const [sortBy, setSortBy] = useState<SortOption>('default');
   const [filterStatus, setFilterStatus] = useState<ItemStatus | 'ALL'>('ALL');
+  const [filterProxySource, setFilterProxySource] = useState<string>('ALL'); // 'ALL' | proxyId | 'SELF' | 'OTHER'
 
   // Modals
   const [isAddWorkOpen, setIsAddWorkOpen] = useState(false);
-  const [newWorkName, setNewWorkName] = useState('');
-  
+
   // Stats Modal
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [expandedStatWorkId, setExpandedStatWorkId] = useState<string | null>(null);
+
+  // Monthly Stats Modal
+  const [isMonthlyStatsOpen, setIsMonthlyStatsOpen] = useState(false);
   
   // Work & Category Manager Modal State
   const [isManagerOpen, setIsManagerOpen] = useState(false);
@@ -75,6 +91,15 @@ export const GoodsList: React.FC = () => {
     setItems(fetchedItems);
     setWorks(fetchedWorks);
     setProxies(fetchedProxies);
+
+    // Preload all images in batch for better performance
+    const imageIds = fetchedItems.map(item => item.imageId).filter(Boolean);
+    if (imageIds.length > 0) {
+      preloadImages(imageIds).catch(error => {
+        console.error('Failed to preload images:', error);
+      });
+    }
+
     setIsLoading(false);
   };
 
@@ -127,7 +152,21 @@ export const GoodsList: React.FC = () => {
       result = result.filter(i => i.status === filterStatus);
     }
 
-    // 4. Search Query (Name or Original Name)
+    // 4. Filter by Proxy Source
+    if (filterProxySource !== 'ALL') {
+      if (filterProxySource === 'SELF') {
+        // 篩選自購的周邊
+        result = result.filter(i => i.sourceType === SourceType.SELF);
+      } else if (filterProxySource === 'OTHER') {
+        // 篩選代購但沒有填寫 proxyId 的周邊
+        result = result.filter(i => i.sourceType === SourceType.PROXY && !i.proxyId);
+      } else {
+        // 篩選特定代購的周邊
+        result = result.filter(i => i.sourceType === SourceType.PROXY && i.proxyId === filterProxySource);
+      }
+    }
+
+    // 5. Search Query (Name or Original Name)
     if (debouncedSearchQuery.trim()) {
         const query = debouncedSearchQuery.toLowerCase();
         result = result.filter(i =>
@@ -159,7 +198,7 @@ export const GoodsList: React.FC = () => {
         default: return b.createdAt - a.createdAt;
       }
     });
-  }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus, debouncedSearchQuery, works]);
+  }, [items, selectedWorkId, selectedCategoryId, sortBy, filterStatus, filterProxySource, debouncedSearchQuery, works]);
 
   // Calculate Total Value for Current View
   const currentViewTotal = useMemo(() => {
@@ -288,14 +327,16 @@ export const GoodsList: React.FC = () => {
 
   // --- Handlers ---
 
-  const handleCreateWork = async () => {
-    if (newWorkName.trim()) {
-      const work = await StorageService.addWork(newWorkName);
-      setSelectedWorkId(work.id);
-      setNewWorkName('');
-      setIsAddWorkOpen(false);
-      refreshData();
+  const handleCreateWork = async (workName: string) => {
+    if (!workName.trim()) {
+      toast.error('請填寫作品名稱');
+      return;
     }
+    const work = await StorageService.addWork(workName);
+    setSelectedWorkId(work.id);
+    setIsAddWorkOpen(false);
+    refreshData();
+    toast.success(`已新增作品「${work.name}」`);
   };
 
   // Manager Modal Handlers
@@ -310,16 +351,20 @@ export const GoodsList: React.FC = () => {
   };
 
   const handleUpdateWorkName = async () => {
-    if (selectedWorkId && editWorkName.trim()) {
-      await StorageService.updateWork(selectedWorkId, editWorkName);
-      refreshData();
-      toast.success('作品名稱已更新');
+    if (!editWorkName.trim()) {
+      toast.error('作品名稱不能為空');
+      return;
     }
+    if (!selectedWorkId) return;
+
+    await StorageService.updateWork(selectedWorkId, editWorkName);
+    refreshData();
+    toast.success('作品名稱已更新');
   };
 
   const handleDeleteWork = () => {
     if (!selectedWorkId || !currentWork) return;
-    
+
     setConfirmConfig({
         isOpen: true,
         title: '⚠️ 危險動作',
@@ -332,6 +377,7 @@ export const GoodsList: React.FC = () => {
         ),
         isDangerous: true,
         onConfirm: async () => {
+            setIsDeleting(true);
             try {
                 await StorageService.deleteWork(selectedWorkId);
                 setSelectedWorkId(null);
@@ -342,26 +388,38 @@ export const GoodsList: React.FC = () => {
             } catch (e) {
                 toast.error('刪除失敗');
                 console.error(e);
+            } finally {
+                setIsDeleting(false);
+                setConfirmConfig(null);
             }
-            setConfirmConfig(null);
         }
     });
   };
 
   const handleAddCategory = async () => {
-    if (selectedWorkId && newCategoryName.trim()) {
-      await StorageService.addCategoryToWork(selectedWorkId, newCategoryName);
-      setNewCategoryName('');
-      refreshData();
+    if (!newCategoryName.trim()) {
+      toast.error('分類名稱不能為空');
+      return;
     }
+    if (!selectedWorkId) return;
+
+    await StorageService.addCategoryToWork(selectedWorkId, newCategoryName);
+    setNewCategoryName('');
+    refreshData();
+    toast.success(`已新增分類「${newCategoryName}」`);
   };
 
   const handleUpdateCategory = async (catId: string) => {
-    if (selectedWorkId && editingCatName.trim()) {
-      await StorageService.updateCategory(selectedWorkId, catId, editingCatName);
-      setEditingCatId(null);
-      refreshData();
+    if (!editingCatName.trim()) {
+      toast.error('分類名稱不能為空');
+      return;
     }
+    if (!selectedWorkId) return;
+
+    await StorageService.updateCategory(selectedWorkId, catId, editingCatName);
+    setEditingCatId(null);
+    refreshData();
+    toast.success('分類名稱已更新');
   };
 
   const handleDeleteCategory = (catId: string, catName: string) => {
@@ -416,11 +474,41 @@ export const GoodsList: React.FC = () => {
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.workId || !formData.categoryId) {
-      toast.error('請填寫完整資訊');
+
+    // Detailed validation with specific error messages
+    if (!formData.name?.trim()) {
+      toast.error('請填寫品項名稱');
       return;
     }
+    if (!formData.workId) {
+      toast.error('請選擇所屬作品');
+      return;
+    }
+    if (!formData.categoryId) {
+      toast.error('請選擇分類');
+      return;
+    }
+    if (formData.price === undefined || formData.price < 0) {
+      toast.error('請填寫有效的價格');
+      return;
+    }
+    if (formData.quantity === undefined || formData.quantity < 1) {
+      toast.error('數量必須至少為 1');
+      return;
+    }
+    if (formData.paymentStatus === PaymentStatus.PAID_DEPOSIT) {
+      if (!formData.depositAmount || formData.depositAmount <= 0) {
+        toast.error('已匯訂金時，請填寫訂金金額');
+        return;
+      }
+      const totalPrice = (formData.price || 0) * (formData.quantity || 1);
+      if (formData.depositAmount >= totalPrice) {
+        toast.error('訂金金額不能大於或等於總價');
+        return;
+      }
+    }
 
+    setIsSaving(true);
     try {
       // Handle image storage
       let imageId = formData.imageId;
@@ -451,30 +539,47 @@ export const GoodsList: React.FC = () => {
       }
       setIsFormOpen(false);
       refreshData();
-    } catch (error) {
+    } catch (error: any) {
         console.error(error);
-        toast.error('儲存失敗');
+
+        // Handle quota exceeded error with friendly message
+        if (error.name === 'QuotaExceededError') {
+          toast.error(error.message || '儲存空間不足，請刪除一些舊圖片');
+        } else {
+          toast.error('儲存失敗');
+        }
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDeleteItem = (id: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
       e?.preventDefault();
-      
+
       setConfirmConfig({
           isOpen: true,
           title: '刪除周邊',
           message: '確定要刪除這個周邊嗎？此動作無法復原。',
           isDangerous: true,
           onConfirm: async () => {
-              await StorageService.deleteItem(id);
-              // If we are currently editing this item (e.g. from modal), close modal
-              if (editingItem?.id === id) {
-                  setIsFormOpen(false);
-                  setEditingItem(null);
+              setIsDeleting(true);
+              try {
+                await StorageService.deleteItem(id);
+                // If we are currently editing this item (e.g. from modal), close modal
+                if (editingItem?.id === id) {
+                    setIsFormOpen(false);
+                    setEditingItem(null);
+                }
+                refreshData();
+                toast.success('周邊已刪除');
+              } catch (error) {
+                console.error(error);
+                toast.error('刪除失敗');
+              } finally {
+                setIsDeleting(false);
+                setConfirmConfig(null);
               }
-              refreshData();
-              setConfirmConfig(null);
           }
       });
   };
@@ -537,8 +642,8 @@ export const GoodsList: React.FC = () => {
         </div>
         
         {/* Desktop Total Summary in Sidebar */}
-        <div className="sticky bottom-0 p-4 bg-gradient-to-t from-white to-white/90 backdrop-blur-sm border-t border-primary-light">
-           <button 
+        <div className="sticky bottom-0 p-4 bg-gradient-to-t from-white to-white/90 backdrop-blur-sm border-t border-primary-light space-y-2">
+           <button
              onClick={() => setIsStatsOpen(true)}
              className="w-full bg-secondary/10 hover:bg-secondary/20 text-secondary-dark rounded-xl p-3 flex items-center justify-between group transition-colors cursor-pointer"
            >
@@ -552,6 +657,22 @@ export const GoodsList: React.FC = () => {
                  </div>
               </div>
               <ChevronRight size={16} className="text-secondary/50 group-hover:text-secondary pointer-events-none" />
+           </button>
+
+           <button
+             onClick={() => setIsMonthlyStatsOpen(true)}
+             className="w-full bg-primary/10 hover:bg-primary/20 text-primary-dark rounded-xl p-3 flex items-center justify-between group transition-colors cursor-pointer"
+           >
+              <div className="flex items-center gap-2 pointer-events-none">
+                 <div className="p-1.5 bg-white rounded-full text-primary shadow-sm">
+                    <Calendar size={16} />
+                 </div>
+                 <div className="text-left">
+                    <span className="font-bold text-xs block opacity-70">月度支出統計</span>
+                    <span className="font-black text-sm">查看每月支出</span>
+                 </div>
+              </div>
+              <ChevronRight size={16} className="text-primary/50 group-hover:text-primary pointer-events-none" />
            </button>
         </div>
       </aside>
@@ -632,51 +753,43 @@ export const GoodsList: React.FC = () => {
              </div>
 
              {/* Mobile Search Bar (Moved Here - After Categories) */}
-             <div className="md:hidden w-full relative">
-                <input 
-                    type="text" 
+             <div className="md:hidden w-full">
+                <SearchBar
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={setSearchQuery}
                     placeholder="搜尋名稱..."
-                    className="w-full pl-9 pr-4 py-2 bg-white border-2 border-primary-light rounded-full text-sm focus:outline-none focus:border-primary text-gray-800 shadow-sm"
                 />
-                <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
-                {searchQuery && (
-                    <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
-                        <X size={14} />
-                    </button>
-                )}
             </div>
 
              <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 md:ml-auto w-full md:w-auto">
                 {/* Desktop Search Bar */}
-                <div className="hidden md:block relative w-48 lg:w-64 transition-all focus-within:w-64">
-                    <input 
-                        type="text" 
+                <div className="hidden md:block w-48 lg:w-64">
+                    <SearchBar
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={setSearchQuery}
                         placeholder="搜尋名稱..."
-                        className="w-full pl-9 pr-4 py-2 bg-white border-2 border-primary-light rounded-full text-sm focus:outline-none focus:border-primary text-gray-800 shadow-sm"
                     />
-                    <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
-                    {searchQuery && (
-                        <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
-                            <X size={14} />
-                        </button>
-                    )}
                 </div>
 
-                {/* Mobile Stats Button (View Detailed Breakdown) */}
-                <button 
+                {/* Mobile Stats Buttons */}
+                <button
                     onClick={() => setIsStatsOpen(true)}
-                    className="md:hidden shrink-0 bg-white border-2 border-primary-light text-primary-dark p-2 rounded-full shadow-sm cursor-pointer"
+                    className="md:hidden shrink-0 bg-white border-2 border-primary-light text-secondary-dark p-2 rounded-full shadow-sm cursor-pointer"
+                    title="資產統計"
                 >
                     <Calculator size={18} className="pointer-events-none" />
                 </button>
+                <button
+                    onClick={() => setIsMonthlyStatsOpen(true)}
+                    className="md:hidden shrink-0 bg-white border-2 border-primary-light text-primary-dark p-2 rounded-full shadow-sm cursor-pointer"
+                    title="月度統計"
+                >
+                    <Calendar size={18} className="pointer-events-none" />
+                </button>
 
                 <div className="relative group shrink-0">
-                    <select 
-                        value={filterStatus} 
+                    <select
+                        value={filterStatus}
                         onChange={(e) => setFilterStatus(e.target.value as any)}
                         className="appearance-none bg-white border-2 border-primary-light text-xs md:text-sm rounded-full pl-8 pr-6 py-2 focus:outline-none focus:border-primary text-gray-700 cursor-pointer shadow-sm hover:border-primary/50 transition-colors font-medium"
                     >
@@ -685,7 +798,21 @@ export const GoodsList: React.FC = () => {
                     </select>
                     <Filter className="absolute left-2.5 top-2.5 text-gray-400 w-3.5 h-3.5 pointer-events-none" />
                 </div>
-                
+
+                <div className="relative group shrink-0">
+                    <select
+                        value={filterProxySource}
+                        onChange={(e) => setFilterProxySource(e.target.value)}
+                        className="appearance-none bg-white border-2 border-primary-light text-xs md:text-sm rounded-full pl-8 pr-6 py-2 focus:outline-none focus:border-primary text-gray-700 cursor-pointer shadow-sm hover:border-primary/50 transition-colors font-medium"
+                    >
+                        <option value="ALL">所有來源</option>
+                        <option value="SELF">自購</option>
+                        <option value="OTHER">其他</option>
+                        {proxies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <Users className="absolute left-2.5 top-2.5 text-gray-400 w-3.5 h-3.5 pointer-events-none" />
+                </div>
+
                 <div className="relative group shrink-0">
                     <select
                         value={sortBy}
@@ -739,6 +866,7 @@ export const GoodsList: React.FC = () => {
                         proxies={proxies}
                         sortBy={sortBy}
                         dragHandlers={goodsDrag}
+                        cachedImageUrl={getImage(item.imageId)}
                         onEdit={openForm}
                         onDelete={handleDeleteItem}
                     />
@@ -760,25 +888,11 @@ export const GoodsList: React.FC = () => {
       {/* --- Modals (Unchanged) --- */}
       
       {/* 1. Add Work Modal */}
-      {isAddWorkOpen && (
-          <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl border-4 border-white">
-                  <h3 className="text-xl font-bold mb-6 text-center text-gray-800">新增作品分類</h3>
-                  <input 
-                    autoFocus
-                    type="text" 
-                    value={newWorkName} 
-                    onChange={e => setNewWorkName(e.target.value)} 
-                    className="w-full border-2 border-gray-100 rounded-xl p-3 mb-6 focus:border-primary focus:outline-none text-center font-medium bg-white text-gray-900 placeholder-gray-400" 
-                    placeholder="作品名稱 (例如: 排球少年)"
-                  />
-                  <div className="flex gap-3">
-                      <button onClick={() => setIsAddWorkOpen(false)} className="flex-1 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold transition">取消</button>
-                      <button onClick={handleCreateWork} className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark font-bold shadow-lg shadow-primary/30 transition">建立</button>
-                  </div>
-              </div>
-          </div>
-      )}
+      <AddWorkModal
+        isOpen={isAddWorkOpen}
+        onClose={() => setIsAddWorkOpen(false)}
+        onSubmit={handleCreateWork}
+      />
 
       {/* 2. Manager Modal */}
       <WorkManager
@@ -817,20 +931,29 @@ export const GoodsList: React.FC = () => {
         onClose={() => setIsStatsOpen(false)}
       />
 
-      {/* 3. Item Form Modal */}
+      {/* 5. Monthly Statistics Modal */}
+      <MonthlyStatsModal
+        isOpen={isMonthlyStatsOpen}
+        items={items}
+        onClose={() => setIsMonthlyStatsOpen(false)}
+      />
+
+      {/* 6. Item Form Modal */}
       <ItemForm
         isOpen={isFormOpen}
         editingItem={editingItem}
         formData={formData}
         works={works}
         proxies={proxies}
+        isSaving={isSaving}
+        isDeleting={isDeleting}
         onClose={() => setIsFormOpen(false)}
         onSubmit={handleFormSubmit}
         onDelete={handleDeleteItem}
         onFormDataChange={setFormData}
       />
 
-      {/* 5. Custom Confirm Dialog */}
+      {/* 7. Custom Confirm Dialog */}
       <ConfirmDialog
         isOpen={!!confirmConfig}
         title={confirmConfig?.title || ''}

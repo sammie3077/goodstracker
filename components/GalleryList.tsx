@@ -3,19 +3,29 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from '../services/storageService';
 import { DB, STORES } from '../services/db';
 import { GalleryItem, Work, GallerySpec } from '../types';
-import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Library, Sparkle, Loader2, Search, GripVertical, ArrowUpDown } from 'lucide-react';
+import { Plus, Filter, Trash2, X, Settings, Edit2, Book, Check, AlertTriangle, Grid, Layers, Loader2, GripVertical, ArrowUpDown, Library, Search, Sparkle } from 'lucide-react';
 import { ImageCropper } from './ImageCropper';
 import { useLongPressDrag } from '../hooks/useLongPressDrag';
 import { useDebounce } from '../hooks/useDebounce';
 import { toast } from 'sonner';
 import { ImageService } from '../services/imageService';
 import { GalleryCard } from './GalleryList/GalleryCard';
+import { useImageCache } from '../contexts/ImageCacheContext';
+import { SearchBar } from './shared/SearchBar';
+import { AddWorkModal } from './shared/AddWorkModal';
 
 export const GalleryList: React.FC = () => {
   // Data State
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [works, setWorks] = useState<Work[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Operation Loading States
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Image Cache
+  const { preloadImages, getImage } = useImageCache();
 
   // UI State
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
@@ -36,8 +46,7 @@ export const GalleryList: React.FC = () => {
 
   // Modals
   const [isAddWorkOpen, setIsAddWorkOpen] = useState(false);
-  const [newWorkName, setNewWorkName] = useState('');
-  
+
   // Work Manager Modal State
   const [isManagerOpen, setIsManagerOpen] = useState(false);
   const [editWorkName, setEditWorkName] = useState('');
@@ -63,6 +72,15 @@ export const GalleryList: React.FC = () => {
     ]);
     setItems(fetchedItems);
     setWorks(fetchedWorks);
+
+    // Preload all images in batch for better performance
+    const imageIds = fetchedItems.map(item => item.imageId).filter(Boolean);
+    if (imageIds.length > 0) {
+      preloadImages(imageIds).catch(error => {
+        console.error('Failed to preload images:', error);
+      });
+    }
+
     setIsLoading(false);
   };
 
@@ -149,14 +167,16 @@ export const GalleryList: React.FC = () => {
 
   // --- Handlers ---
 
-  const handleCreateWork = async () => {
-    if (newWorkName.trim()) {
-      const work = await StorageService.addWork(newWorkName);
-      setSelectedWorkId(work.id);
-      setNewWorkName('');
-      setIsAddWorkOpen(false);
-      refreshData();
+  const handleCreateWork = async (workName: string) => {
+    if (!workName.trim()) {
+      toast.error('請填寫作品名稱');
+      return;
     }
+    const work = await StorageService.addWork(workName);
+    setSelectedWorkId(work.id);
+    setIsAddWorkOpen(false);
+    refreshData();
+    toast.success(`已新增作品「${work.name}」`);
   };
 
   // Manager Modal Handlers
@@ -168,16 +188,20 @@ export const GalleryList: React.FC = () => {
   };
 
   const handleUpdateWorkName = async () => {
-    if (selectedWorkId && editWorkName.trim()) {
-      await StorageService.updateWork(selectedWorkId, editWorkName);
-      refreshData();
-      toast.success('作品名稱已更新');
+    if (!editWorkName.trim()) {
+      toast.error('作品名稱不能為空');
+      return;
     }
+    if (!selectedWorkId) return;
+
+    await StorageService.updateWork(selectedWorkId, editWorkName);
+    refreshData();
+    toast.success('作品名稱已更新');
   };
 
   const handleDeleteWork = () => {
     if (!selectedWorkId || !currentWork) return;
-    
+
     setConfirmConfig({
         isOpen: true,
         title: '⚠️ 危險動作',
@@ -190,6 +214,7 @@ export const GalleryList: React.FC = () => {
         ),
         isDangerous: true,
         onConfirm: async () => {
+            setIsDeleting(true);
             try {
                 await StorageService.deleteWork(selectedWorkId);
                 setSelectedWorkId(null);
@@ -199,8 +224,10 @@ export const GalleryList: React.FC = () => {
             } catch (e) {
                 toast.error('刪除失敗');
                 console.error(e);
+            } finally {
+                setIsDeleting(false);
+                setConfirmConfig(null);
             }
-            setConfirmConfig(null);
         }
     });
   };
@@ -236,11 +263,18 @@ export const GalleryList: React.FC = () => {
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.workId) {
-      toast.error('請填寫完整資訊');
+
+    // Detailed validation with specific error messages
+    if (!formData.name?.trim()) {
+      toast.error('請填寫品項名稱');
+      return;
+    }
+    if (!formData.workId) {
+      toast.error('請選擇所屬作品');
       return;
     }
 
+    setIsSaving(true);
     try {
       // Handle image storage
       let imageId = formData.imageId;
@@ -268,29 +302,46 @@ export const GalleryList: React.FC = () => {
       }
       setIsFormOpen(false);
       refreshData();
-    } catch (error) {
+    } catch (error: any) {
         console.error(error);
-        toast.error('儲存失敗');
+
+        // Handle quota exceeded error with friendly message
+        if (error.name === 'QuotaExceededError') {
+          toast.error(error.message || '儲存空間不足，請刪除一些舊圖片');
+        } else {
+          toast.error('儲存失敗');
+        }
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDeleteItem = (id: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
       e?.preventDefault();
-      
+
       setConfirmConfig({
           isOpen: true,
           title: '刪除圖鑑',
           message: '確定要刪除這個圖鑑項目嗎？此動作無法復原。',
           isDangerous: true,
           onConfirm: async () => {
-              await StorageService.deleteGalleryItem(id);
-              if (editingItem?.id === id) {
-                  setIsFormOpen(false);
-                  setEditingItem(null);
+              setIsDeleting(true);
+              try {
+                await StorageService.deleteGalleryItem(id);
+                if (editingItem?.id === id) {
+                    setIsFormOpen(false);
+                    setEditingItem(null);
+                }
+                refreshData();
+                toast.success('圖鑑已刪除');
+              } catch (error) {
+                console.error(error);
+                toast.error('刪除失敗');
+              } finally {
+                setIsDeleting(false);
+                setConfirmConfig(null);
               }
-              refreshData();
-              setConfirmConfig(null);
           }
       });
   };
@@ -437,20 +488,12 @@ export const GalleryList: React.FC = () => {
 
             <div className="flex items-center gap-2 w-full md:w-auto">
                 {/* Search Bar */}
-                <div className="relative flex-1 md:w-64 max-w-sm">
-                    <input 
-                        type="text" 
+                <div className="flex-1 md:w-64 max-w-sm">
+                    <SearchBar
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={setSearchQuery}
                         placeholder="搜尋圖鑑..."
-                        className="w-full pl-9 pr-4 py-2 bg-white border-2 border-primary-light rounded-full text-xs md:text-sm focus:outline-none focus:border-primary text-gray-800 shadow-sm"
                     />
-                    <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
-                     {searchQuery && (
-                        <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
-                            <X size={14} />
-                        </button>
-                    )}
                 </div>
 
                 <div className="ml-2 flex items-center gap-2">
@@ -490,6 +533,7 @@ export const GalleryList: React.FC = () => {
                         item={item}
                         sortBy={sortBy}
                         dragHandlers={galleryDrag}
+                        cachedImageUrl={getImage(item.imageId)}
                         onClick={() => openForm(item)}
                     />
                 ))}
@@ -510,25 +554,11 @@ export const GalleryList: React.FC = () => {
       {/* --- Modals (Unchanged) --- */}
       
       {/* 1. Add Work Modal */}
-      {isAddWorkOpen && (
-          <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl border-4 border-white">
-                  <h3 className="text-xl font-bold mb-6 text-center text-gray-800">新增作品分類</h3>
-                  <input 
-                    autoFocus
-                    type="text" 
-                    value={newWorkName} 
-                    onChange={e => setNewWorkName(e.target.value)} 
-                    className="w-full border-2 border-gray-100 rounded-xl p-3 mb-6 focus:border-primary focus:outline-none text-center font-medium bg-white text-gray-900 placeholder-gray-400" 
-                    placeholder="作品名稱 (例如: 排球少年)"
-                  />
-                  <div className="flex gap-3">
-                      <button onClick={() => setIsAddWorkOpen(false)} className="flex-1 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold transition">取消</button>
-                      <button onClick={handleCreateWork} className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark font-bold shadow-lg shadow-primary/30 transition">建立</button>
-                  </div>
-              </div>
-          </div>
-      )}
+      <AddWorkModal
+        isOpen={isAddWorkOpen}
+        onClose={() => setIsAddWorkOpen(false)}
+        onSubmit={handleCreateWork}
+      />
 
       {/* 2. Manager Modal (Works only, no categories for gallery) */}
       {isManagerOpen && currentWork && (
@@ -751,25 +781,39 @@ export const GalleryList: React.FC = () => {
                         <button
                             type="button"
                             onClick={(e) => handleDeleteItem(editingItem.id, e)}
-                            className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center cursor-pointer"
+                            disabled={isDeleting || isSaving}
+                            className="px-4 py-3 border-2 border-red-100 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 hover:border-red-200 font-bold transition flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             title="刪除此圖鑑"
                         >
-                            <Trash2 size={20} className="pointer-events-none" />
+                            {isDeleting ? (
+                              <Loader2 size={20} className="animate-spin pointer-events-none" />
+                            ) : (
+                              <Trash2 size={20} className="pointer-events-none" />
+                            )}
                         </button>
                     )}
                     <button
                         type="button"
                         onClick={() => setIsFormOpen(false)}
-                        className="flex-1 py-3 border-2 border-gray-200 text-gray-500 rounded-xl hover:bg-white hover:border-gray-300 font-bold transition cursor-pointer"
+                        disabled={isSaving || isDeleting}
+                        className="flex-1 py-3 border-2 border-gray-200 text-gray-500 rounded-xl hover:bg-white hover:border-gray-300 font-bold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         取消
                     </button>
                     <button
                         type="button"
                         onClick={handleFormSubmit}
-                        className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark shadow-lg shadow-primary/20 font-bold transition transform active:scale-95 cursor-pointer"
+                        disabled={isSaving || isDeleting}
+                        className="flex-1 py-3 bg-primary text-gray-900 rounded-xl hover:bg-primary-dark shadow-lg shadow-primary/20 font-bold transition transform active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                        儲存
+                        {isSaving ? (
+                          <>
+                            <Loader2 size={18} className="animate-spin" />
+                            <span>儲存中...</span>
+                          </>
+                        ) : (
+                          '儲存'
+                        )}
                     </button>
                 </div>
             </div>

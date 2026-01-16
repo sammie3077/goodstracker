@@ -28,8 +28,46 @@ export const ImageService = {
       await DB.put(STORES.IMAGES, imageData);
 
       return imageId;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save image:', error);
+
+      // Handle quota exceeded error
+      if (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+        const quotaError = new Error('儲存空間不足，請刪除一些舊圖片或清理瀏覽器快取');
+        quotaError.name = 'QuotaExceededError';
+        throw quotaError;
+      }
+
+      throw error;
+    }
+  },
+
+  /**
+   * Save a base64 image as Blob with a specific ID (used for restore)
+   */
+  saveImageWithId: async (imageId: string, base64: string, createdAt?: number): Promise<void> => {
+    try {
+      // Convert base64 to Blob
+      const blob = base64ToBlob(base64);
+
+      // Save to IndexedDB with specified ID
+      const imageData: ImageData = {
+        id: imageId,
+        blob,
+        createdAt: createdAt || Date.now()
+      };
+
+      await DB.put(STORES.IMAGES, imageData);
+    } catch (error: any) {
+      console.error('Failed to save image with ID:', error);
+
+      // Handle quota exceeded error
+      if (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+        const quotaError = new Error('儲存空間不足，請刪除一些舊圖片或清理瀏覽器快取');
+        quotaError.name = 'QuotaExceededError';
+        throw quotaError;
+      }
+
       throw error;
     }
   },

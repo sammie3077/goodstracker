@@ -1,5 +1,5 @@
 
-import { GoodsItem, ProxyService, Work, GalleryItem } from '../types';
+import { GoodsItem, ProxyService, Work, GalleryItem, ConditionStatus } from '../types';
 import { DB, STORES } from './db';
 import { ImageService } from './imageService';
 
@@ -56,9 +56,10 @@ export const StorageService = {
         let migratedCount = 0;
 
         for (const item of items) {
-          // @ts-ignore - accessing old enum value
-          if (item.condition === 'OPENED_CHECKED' || item.condition === '僅拆檢') {
-            item.condition = 'CHECKED' as any;
+          // Legacy migration: check for old enum value as string
+          const legacyCondition = item.condition as string;
+          if (legacyCondition === 'OPENED_CHECKED' || legacyCondition === '僅拆檢') {
+            item.condition = ConditionStatus.CHECKED;
             await DB.put(STORES.ITEMS, item);
             migratedCount++;
           }
@@ -127,18 +128,37 @@ export const StorageService = {
     // Ensure DB is initialized before reading
     await DB.init();
 
-    const [items, gallery, works, proxies] = await Promise.all([
+    const [items, gallery, works, proxies, images] = await Promise.all([
       DB.getAll<GoodsItem>(STORES.ITEMS),
       DB.getAll<GalleryItem>(STORES.GALLERY),
       DB.getAll<Work>(STORES.WORKS),
       DB.getAll<ProxyService>(STORES.PROXIES),
+      DB.getAll(STORES.IMAGES),
     ]);
+
+    // Convert image Blobs to base64 for JSON serialization
+    const imagesForBackup = await Promise.all(
+      images.map(async (imageData: any) => {
+        try {
+          const base64 = await ImageService.getImageAsBase64(imageData.id);
+          return {
+            id: imageData.id,
+            base64: base64,
+            createdAt: imageData.createdAt
+          };
+        } catch (error) {
+          console.error(`Failed to backup image ${imageData.id}:`, error);
+          return null;
+        }
+      })
+    );
 
     return {
       items,
       gallery,
       works,
       proxies,
+      images: imagesForBackup.filter(img => img !== null), // Remove failed conversions
       theme: localStorage.getItem(THEME_KEY) || 'yellow',
       backupDate: new Date().toISOString(),
     };
@@ -151,14 +171,30 @@ export const StorageService = {
       await DB.clear(STORES.GALLERY);
       await DB.clear(STORES.WORKS);
       await DB.clear(STORES.PROXIES);
+      await DB.clear(STORES.IMAGES);
 
       if (Array.isArray(data.items)) await DB.bulkPut(STORES.ITEMS, data.items);
       if (Array.isArray(data.gallery)) await DB.bulkPut(STORES.GALLERY, data.gallery);
       if (Array.isArray(data.works)) await DB.bulkPut(STORES.WORKS, data.works);
       if (Array.isArray(data.proxies)) await DB.bulkPut(STORES.PROXIES, data.proxies);
-      
+
+      // Restore images: convert base64 back to Blob
+      if (Array.isArray(data.images)) {
+        for (const imageBackup of data.images) {
+          try {
+            if (imageBackup.base64 && imageBackup.id) {
+              // Use ImageService to save the base64 as Blob with the original ID
+              await ImageService.saveImageWithId(imageBackup.id, imageBackup.base64, imageBackup.createdAt);
+            }
+          } catch (error) {
+            console.error(`Failed to restore image ${imageBackup.id}:`, error);
+            // Continue with other images even if one fails
+          }
+        }
+      }
+
       if (typeof data.theme === 'string') localStorage.setItem(THEME_KEY, data.theme);
-      
+
       return true;
     } catch (e) {
       console.error("Restore failed", e);
@@ -177,6 +213,15 @@ export const StorageService = {
     await DB.put(STORES.ITEMS, item);
   },
   deleteItem: async (id: string) => {
+    // Get the item first to check for associated image
+    const items = await StorageService.getItems();
+    const item = items.find(i => i.id === id);
+
+    // Delete associated image if exists
+    if (item?.imageId) {
+      await ImageService.deleteImage(item.imageId);
+    }
+
     await DB.delete(STORES.ITEMS, id);
   },
   bulkUpdateItems: async (items: GoodsItem[]) => {
@@ -194,6 +239,15 @@ export const StorageService = {
     await DB.put(STORES.GALLERY, item);
   },
   deleteGalleryItem: async (id: string) => {
+    // Get the gallery item first to check for associated image
+    const galleryItems = await StorageService.getGalleryItems();
+    const item = galleryItems.find(i => i.id === id);
+
+    // Delete associated image if exists
+    if (item?.imageId) {
+      await ImageService.deleteImage(item.imageId);
+    }
+
     await DB.delete(STORES.GALLERY, id);
   },
   bulkUpdateGalleryItems: async (items: GalleryItem[]) => {
@@ -222,22 +276,37 @@ export const StorageService = {
     }
   },
   deleteWork: async (workId: string) => {
-    // 1. Delete the work
-    await DB.delete(STORES.WORKS, workId);
-
-    // 2. Cascade delete items (Goods)
+    // 1. Get all items to delete and their images
     const items = await StorageService.getItems();
     const itemsToDelete = items.filter(i => i.workId === workId);
+
+    const galleryItems = await StorageService.getGalleryItems();
+    const galleryToDelete = galleryItems.filter(i => i.workId === workId);
+
+    // 2. Delete all associated images first
+    for (const item of itemsToDelete) {
+      if (item.imageId) {
+        await ImageService.deleteImage(item.imageId);
+      }
+    }
+
+    for (const item of galleryToDelete) {
+      if (item.imageId) {
+        await ImageService.deleteImage(item.imageId);
+      }
+    }
+
+    // 3. Delete the items
     for (const item of itemsToDelete) {
       await DB.delete(STORES.ITEMS, item.id);
     }
 
-    // 3. Cascade delete items (Gallery)
-    const galleryItems = await StorageService.getGalleryItems();
-    const galleryToDelete = galleryItems.filter(i => i.workId === workId);
     for (const item of galleryToDelete) {
       await DB.delete(STORES.GALLERY, item.id);
     }
+
+    // 4. Delete the work itself
+    await DB.delete(STORES.WORKS, workId);
   },
   addCategoryToWork: async (workId: string, categoryName: string) => {
     const works = await StorageService.getWorks();
@@ -259,19 +328,28 @@ export const StorageService = {
     }
   },
   deleteCategory: async (workId: string, categoryId: string) => {
-    // 1. Remove category from work
+    // 1. Get all items to delete and their images
+    const items = await StorageService.getItems();
+    const itemsToDelete = items.filter(i => i.categoryId === categoryId);
+
+    // 2. Delete all associated images first
+    for (const item of itemsToDelete) {
+      if (item.imageId) {
+        await ImageService.deleteImage(item.imageId);
+      }
+    }
+
+    // 3. Delete the items
+    for (const item of itemsToDelete) {
+      await DB.delete(STORES.ITEMS, item.id);
+    }
+
+    // 4. Remove category from work
     const works = await StorageService.getWorks();
     const work = works.find(w => w.id === workId);
     if (work) {
       work.categories = work.categories.filter(c => c.id !== categoryId);
       await DB.put(STORES.WORKS, work);
-    }
-
-    // 2. Cascade delete items belonging to this category
-    const items = await StorageService.getItems();
-    const itemsToDelete = items.filter(i => i.categoryId === categoryId);
-    for (const item of itemsToDelete) {
-      await DB.delete(STORES.ITEMS, item.id);
     }
   },
   bulkUpdateWorks: async (works: Work[]) => {

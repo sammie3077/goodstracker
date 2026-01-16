@@ -8,6 +8,7 @@ interface ItemCardProps {
   proxies: ProxyService[];
   sortBy: string;
   dragHandlers?: any;
+  cachedImageUrl?: string | null;
   onEdit: (item: GoodsItem) => void;
   onDelete: (id: string, e?: React.MouseEvent) => void;
 }
@@ -17,11 +18,12 @@ export const ItemCard: React.FC<ItemCardProps> = ({
   proxies,
   sortBy,
   dragHandlers,
+  cachedImageUrl,
   onEdit,
   onDelete,
 }) => {
-  // Load image from Blob storage
-  const { imageUrl } = useImage(item.imageId);
+  // Load image from Blob storage (with optional cache support)
+  const { imageUrl } = useImage(item.imageId, cachedImageUrl);
 
   // Use Theme Colors instead of hardcoded colors
   const getStatusColor = (status: ItemStatus) => {

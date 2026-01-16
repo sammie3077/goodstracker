@@ -69,6 +69,9 @@ export interface GoodsItem {
   paymentStatus: PaymentStatus;
   depositAmount?: number; // If PaymentStatus.PAID_DEPOSIT
 
+  // Purchase Date (optional)
+  purchaseDate?: number; // Timestamp for when the item was purchased
+
   createdAt: number;
   order?: number;
 }

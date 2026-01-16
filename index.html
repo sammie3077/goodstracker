@@ -6,53 +6,12 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <!-- Temporarily disabled for update -->
-    <!-- <link rel="manifest" href="/manifest.json" /> -->
+    <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#eacaa2" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="GoodsTracker" />
     <title>GoodsTracker</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              primary: 'rgb(var(--color-primary) / <alpha-value>)', 
-              'primary-light': 'rgb(var(--color-primary-light) / <alpha-value>)',
-              'primary-dark': 'rgb(var(--color-primary-dark) / <alpha-value>)',
-              secondary: 'rgb(var(--color-secondary) / <alpha-value>)',
-              'secondary-dark': 'rgb(var(--color-secondary-dark) / <alpha-value>)',
-              background: 'rgb(var(--color-background) / <alpha-value>)',
-            },
-            borderRadius: {
-              'xl': '1rem',
-              '2xl': '1.5rem',
-              '3xl': '2rem',
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-      /* Default Theme (Will be overridden by JS) */
-      :root {
-        --color-primary: 252 211 77;
-        --color-primary-light: 254 243 199;
-        --color-primary-dark: 245 158 11;
-        --color-secondary: 78 205 196;
-        --color-secondary-dark: 42 157 143;
-        --color-background: 255 253 245;
-      }
-      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.1); border-radius: 20px; }
-      .custom-scrollbar:hover::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.2); }
-      .no-scrollbar::-webkit-scrollbar { display: none; }
-      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-    </style>
   <script type="importmap">
 {
   "imports": {
